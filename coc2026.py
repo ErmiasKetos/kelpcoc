@@ -233,7 +233,8 @@ def generate_coc_pdf(data, logo_path=None):
     c.setFont("Helvetica",5.5);c.setFillColor(black)
     # Quote # in center area
     _lcell(c,ML+site_w,y-rh,po_w,rh,"Quote #: ",data.get("quote_number",""))
-    # Analysis Requested in right area
+    # Analysis Requested label - this is the TITLE for the analysis columns area
+    # In original, it sits in this row at x=542, spanning the right portion
     _cell(c,ML+site_w+po_w,y-rh,icp_w,rh)
     c.setFont("Helvetica",7);c.setFillColor(black)
     c.drawCentredString(ML+site_w+po_w+icp_w/2,y-rh+3,"Analysis Requested")
@@ -243,18 +244,21 @@ def generate_coc_pdf(data, logo_path=None):
     kelp_sb_top = y
 
     # ═══ TIME ZONE ROW ═══
+    # Original: Time Zone checkboxes on LEFT (x=20..237), County/State on RIGHT (x=239+)
     tzh=11
-    tz_w=main_w*0.30  # time zone checkboxes area
-    cs_w=main_w*0.70  # county/state area
-    _cell(c,ML,y-tzh,tz_w,tzh)
+    tz_left_w = 230  # matches lw (left column) - Time Zone fits here
+    cs_right_w = main_w - tz_left_w  # County/State
+    _cell(c,ML,y-tzh,tz_left_w,tzh)
     c.setFont("Helvetica",6);c.setFillColor(black)
     c.drawString(ML+2,y-tzh+3,"Sample Collection Time Zone :")
     st_tz=data.get("time_zone","PT")
+    tz_start_x = ML+115
     for i,tz in enumerate(["AK","PT","MT","CT","ET"]):
-        cx=ML+118+i*26
+        cx=tz_start_x+i*22
         _cb(c,cx,y-tzh+2,checked=(tz==st_tz),sz=6)
         c.setFont("Helvetica",6);c.setFillColor(black);c.drawString(cx+8,y-tzh+3,tz)
-    _lcell(c,ML+tz_w,y-tzh,cs_w,tzh,"County / State origin of sample(s): ",data.get("county_state",""),lfs=5.5)
+    # County/State in separate cell to the right
+    _lcell(c,ML+tz_left_w,y-tzh,cs_right_w,tzh,"County / State origin of sample(s): ",data.get("county_state",""),lfs=5.5)
     # Sidebar: Project Mgr
     _cell(c,ML+main_w,y-tzh,sb_w,tzh,bg=LIGHT_BLUE)
     c.setFont("Helvetica",6);c.setFillColor(black)
@@ -860,8 +864,40 @@ def main():
         st.subheader("Sample Information")
         ns=st.number_input("Number of Samples",1,14,1,key="num_samples")
         s2=st.session_state.get("selected_tests_dict",{})
-        an=list(s2.keys()) if s2 else ["Analysis"]
-        ac=[n[:20]+"..." if len(n)>20 else n for n in an]
+        # GROUP selected tests by CATEGORY for Analysis Requested columns
+        # Each column = one category (e.g., "Metals", "Inorganics", "PFAS")
+        # not individual test names
+        cat_tests = {}  # category -> list of test names
+        for tname, tinfo in s2.items():
+            # Find which category this test belongs to
+            found_cat = None
+            for cat, tests in TEST_CATALOGUE.items():
+                if tname in tests:
+                    found_cat = cat
+                    break
+            if found_cat is None:
+                found_cat = "OTHER"
+            cat_tests.setdefault(found_cat, []).append(tname)
+        
+        # Build analysis column labels: category short names
+        CAT_SHORT = {
+            "PHYSICAL/GENERAL CHEMISTRY": "Physical/Gen Chem",
+            "METALS": "Metals",
+            "INORGANICS": "Inorganics",
+            "NUTRIENTS": "Nutrients",
+            "ORGANICS": "Organics",
+            "DISINFECTION": "Disinfection",
+            "PFAS TESTING": "PFAS",
+            "PACKAGES": "Packages",
+            "OTHER": "Other",
+        }
+        ac = [CAT_SHORT.get(cat, cat[:18]) for cat in cat_tests.keys()]
+        # Map: for each sample, analyses should reference category short names
+        # Build reverse lookup: test name -> category short name
+        test_to_cat = {}
+        for cat, tnames in cat_tests.items():
+            for tn in tnames:
+                test_to_cat[tn] = CAT_SHORT.get(cat, cat[:18])
         samples=[]
         for i in range(ns):
             with st.expander(f"🧫 Sample {i+1}",expanded=(i==0)):
@@ -878,14 +914,18 @@ def main():
                 c9s,c10s=st.columns(2)
                 with c9s:rcl=st.text_input("Residual Chlorine",key=f"rcl_{i}");rcu=st.selectbox("Units",["","mg/L","ppm"],key=f"rcu_{i}")
                 with c10s:cmt=st.text_area("Comment",key=f"cmt_{i}",height=60)
-                sa=[]
-                if an and an[0]!="Analysis":
+                sa_cats = set()  # categories selected for this sample
+                an = list(s2.keys()) if s2 else []
+                if an:
                     st.markdown("**Analyses:**")
                     ac2=st.columns(min(len(an),4))
                     for j,a in enumerate(an):
                         with ac2[j%min(len(an),4)]:
-                            if st.checkbox(a[:30],value=True,key=f"a_{i}_{j}"):sa.append(a[:20]+"..." if len(a)>20 else a)
-                else:sa=ac
+                            if st.checkbox(a[:30],value=True,key=f"a_{i}_{j}"):
+                                # Add the CATEGORY for this test
+                                cat_name = test_to_cat.get(a, a)
+                                sa_cats.add(cat_name)
+                sa = list(sa_cats) if sa_cats else list(ac)  # fallback to all categories
                 samples.append({"sample_id":sid,"matrix":MATRIX_CODES.get(mx,"DW"),"comp_grab":cg[:4].upper(),"start_date":cd2.strftime("%m/%d/%y") if cd2 else "","start_time":ct2.strftime("%H:%M") if ct2 else "","end_date":ed.strftime("%m/%d/%y") if ed else "","end_time":et.strftime("%H:%M") if et else "","num_containers":str(nc),"res_cl_result":rcl,"res_cl_units":rcu,"analyses":sa,"comment":cmt})
         st.session_state["samples_data"]=samples;st.session_state["analysis_columns"]=ac
 
