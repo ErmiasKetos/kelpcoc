@@ -337,19 +337,21 @@ def generate_coc_pdf(data, logo_path=None):
     c.setFont("Helvetica",6);c.setFillColor(black)
     c.drawString(ML+main_w+3,y-rr*3+3,"Profile / Template: "+data.get("profile_template",""))
 
-    # Row 4: Other_ | Field Filtered | (blank)
+    # Row 4: Other_ | Field Filtered + Analysis:
     half_reg2 = reg_w * 0.40
     _cell(c,ML+dd_w,y-rr*4,half_reg2,rr)
     c.setFont("Helvetica",5.5);c.setFillColor(black)
     c.drawString(ML+dd_w+2,y-rr*4+3,"Other ___________")
-    # Field Filtered
+    # Field Filtered + Analysis in same cell
     ff_w = reg_w * 0.60
     _cell(c,ML+dd_w+half_reg2,y-rr*4,ff_w,rr)
     c.drawString(ML+dd_w+half_reg2+2,y-rr*4+3,"Field Filtered (if applicable):")
     ff=data.get("field_filtered","No")
-    ffx=ML+dd_w+half_reg2+110
+    ffx=ML+dd_w+half_reg2+100
     _cb(c,ffx,y-rr*4+2,checked=(ff=="Yes"),sz=7);c.drawString(ffx+9,y-rr*4+3,"Yes")
     _cb(c,ffx+28,y-rr*4+2,checked=(ff=="No"),sz=7);c.drawString(ffx+37,y-rr*4+3,"No")
+    # Analysis: field (right portion of same row area)
+    c.drawString(ML+dd_w+half_reg2+ff_w*0.55+2,y-rr*4+3,"Analysis:")
 
     # Prelog sidebar (blank row completing sidebar)
     _cell(c,ML+main_w,y-rr*4,sb_w,rr,bg=LIGHT_BLUE)
@@ -368,144 +370,185 @@ def generate_coc_pdf(data, logo_path=None):
     y-=lgh
 
     # ═══ SAMPLE TABLE ═══
+    # Original column widths from template analysis (total table width = 769px in original = 17..786)
+    # We scale to our main_w + sb_w = CW
+    # Original columns:
+    #   Customer Sample ID: 161px, Matrix: 32px, Comp/Grab: 27px
+    #   Composite Start Date: 55px, Time: 35px
+    #   Collected/End Date: 50px, Time: 35px
+    #   # Cont: 20px, Res Chlorine Result: 23px, Units: 21px
+    #   10 Analysis columns: 19px each = 190px total
+    #   Sample Comment: 89px (col 22: x=674..763)
+    #   Pres NC sidebar: 23px (col 23: x=763..786)
+    # Total: 161+32+27+55+35+50+35+20+23+21+190+89+23 = 761
+    
     samples=data.get("samples",[])
     acols=data.get("analysis_columns",[])
-    if not acols:acols=["Tests"]
-
-    # CRITICAL: The comment column and the analysis columns share the right portion
-    # Fixed columns (left part of table)
-    W=main_w
-    cid=W*0.16; cmx=W*0.045; ccg=W*0.045
-    csd=W*0.065; cst=W*0.045; ced=W*0.065; cet=W*0.045
-    cnc=W*0.03; crr=W*0.04; cru=W*0.03; cn3=W*0.025
-    fixed=cid+cmx+ccg+csd+cst+ced+cet+cnc+crr+cru+cn3
-    # Remaining width for analysis columns
-    rem=W-fixed
-    comment_w=70
-    analysis_area=rem-comment_w
-    acw=max(analysis_area/len(acols),14) if acols else analysis_area
-
-    # ═══ TALL VERTICAL ANALYSIS COLUMN HEADERS ═══
-    # This is the key fix: headers are TALL (matching original ~45pt)
-    vert_hdr_h=45  # tall vertical header cells for analysis columns
-    fixed_hdr_h=20  # normal header height for fixed columns (2 sub-rows)
-    h1=10;h2=10
-
-    # The analysis column headers span the full vert_hdr_h
-    # The fixed column headers are at the bottom of this space
-
-    # Draw fixed column headers (bottom-aligned within the header area)
-    top_hdr_y = y
-    fixed_hdr_y = y - vert_hdr_h + fixed_hdr_h  # bottom portion
-
-    cx=ML
-    # Customer Sample ID - spans full height
-    _hcell(c,cx,y-vert_hdr_h,cid,vert_hdr_h,"Customer Sample ID",fs=5.5)
+    
+    # Scale factor: our drawing width / original width
+    OW = 769.0  # original total width
+    TW = main_w + sb_w  # our total width (main + sidebar)
+    sf = TW / OW
+    
+    # Fixed columns (scaled from original)
+    cid  = round(161 * sf)  # Customer Sample ID
+    cmx  = round(32 * sf)   # Matrix
+    ccg  = round(27 * sf)   # Comp/Grab
+    csd  = round(55 * sf)   # Composite Start Date
+    cst  = round(35 * sf)   # Composite Start Time
+    ced  = round(50 * sf)   # Collected/End Date
+    cet  = round(35 * sf)   # Collected/End Time
+    cnc  = round(20 * sf)   # # Cont
+    crr  = round(23 * sf)   # Residual Chlorine Result
+    cru  = round(21 * sf)   # Residual Chlorine Units
+    fixed_total = cid+cmx+ccg+csd+cst+ced+cet+cnc+crr+cru
+    
+    # Analysis columns: ALWAYS 10 columns (matching original template)
+    NUM_ANALYSIS_COLS = 10
+    acw_each = round(19 * sf)  # each analysis column width
+    analysis_total = acw_each * NUM_ANALYSIS_COLS
+    
+    # Sample Comment column
+    comment_w = round(89 * sf)
+    
+    # Preservation NC column (part of sidebar)
+    pnc_w = round(23 * sf)
+    
+    # Adjust comment_w to absorb any rounding difference
+    used = fixed_total + analysis_total + comment_w + pnc_w
+    comment_w += (TW - used)  # absorb rounding
+    
+    # ═══ TABLE HEADERS ═══
+    # Original: headers are ~45pt tall (y=258..305 = ~47pt)
+    vert_hdr_h = 45
+    hdr_top = y
+    
+    # -- Fixed column headers --
+    cx = ML
+    _hcell(c,cx,y-vert_hdr_h,cid,vert_hdr_h,"Customer Sample ID",fs=6)
     cx+=cid
-    _hcell(c,cx,y-vert_hdr_h,cmx,vert_hdr_h,"Matrix *",fs=4.5)
+    _hcell(c,cx,y-vert_hdr_h,cmx,vert_hdr_h,"Matrix *",fs=5)
     cx+=cmx
-    _hcell(c,cx,y-vert_hdr_h,ccg,vert_hdr_h,"Comp /\nGrab",fs=4.5)
+    _hcell(c,cx,y-vert_hdr_h,ccg,vert_hdr_h,"Comp /\nGrab",fs=5)
     cx+=ccg
-    # Composite Start
+    
+    # Composite Start (grouped header)
     csw=csd+cst
-    _hcell(c,cx,y-h1,csw,h1,"Composite Start",fs=5)
-    _hcell(c,cx,y-vert_hdr_h,csd,vert_hdr_h-h1,"Date",fs=4.5)
-    _hcell(c,cx+csd,y-vert_hdr_h,cst,vert_hdr_h-h1,"Time",fs=4.5)
+    h1=12
+    _hcell(c,cx,y-h1,csw,h1,"Composite  Start",fs=5)
+    _hcell(c,cx,y-vert_hdr_h,csd,vert_hdr_h-h1,"Date",fs=5)
+    _hcell(c,cx+csd,y-vert_hdr_h,cst,vert_hdr_h-h1,"Time",fs=5)
     cx+=csw
-    # Collected/End
+    
+    # Collected/End (grouped header)
     cew=ced+cet
-    _hcell(c,cx,y-h1,cew,h1,"Collected or Composite End",fs=4)
-    _hcell(c,cx,y-vert_hdr_h,ced,vert_hdr_h-h1,"Date",fs=4.5)
+    _hcell(c,cx,y-h1,cew,h1,"Collected or Composite\nEnd",fs=4.5)
+    _hcell(c,cx,y-vert_hdr_h,ced,vert_hdr_h-h1,"Date",fs=5)
     _hcell(c,cx+ced,y-vert_hdr_h,cet,vert_hdr_h-h1,"Time",fs=4.5)
     cx+=cew
-    _hcell(c,cx,y-vert_hdr_h,cnc,vert_hdr_h,"# Cont.",fs=4)
+    
+    _hcell(c,cx,y-vert_hdr_h,cnc,vert_hdr_h,"#\nCont.",fs=5)
     cx+=cnc
-    # Residual Chlorine
+    
+    # Residual Chlorine (grouped header)
     rcw=crr+cru
-    _hcell(c,cx,y-h1,rcw,h1,"Residual Chlorine",fs=4)
-    _hcell(c,cx,y-vert_hdr_h,crr,vert_hdr_h-h1,"Result",fs=4)
-    _hcell(c,cx+crr,y-vert_hdr_h,cru,vert_hdr_h-h1,"Units",fs=4)
+    _hcell(c,cx,y-h1,rcw,h1,"Residual\nChlorine",fs=5)
+    _hcell(c,cx,y-vert_hdr_h,crr,vert_hdr_h-h1,"Result",fs=5)
+    _hcell(c,cx+crr,y-vert_hdr_h,cru,vert_hdr_h-h1,"Units",fs=5)
     cx+=rcw
-    # NO3 (rotated)
-    c.setFillColor(HDR_BG);c.rect(cx,y-vert_hdr_h,cn3,vert_hdr_h,fill=1,stroke=0)
-    c.setStrokeColor(black);c.setLineWidth(0.4);c.rect(cx,y-vert_hdr_h,cn3,vert_hdr_h,fill=0,stroke=1)
+    
+    # -- 10 Analysis Requested columns (vertical rotated text) --
+    # Fill first N columns with user's analysis categories, rest blank
+    for ai in range(NUM_ANALYSIS_COLS):
+        label = acols[ai] if ai < len(acols) else ""
+        # Draw the header cell with dark blue background
+        c.setFillColor(HDR_BG);c.rect(cx,y-vert_hdr_h,acw_each,vert_hdr_h,fill=1,stroke=0)
+        c.setStrokeColor(black);c.setLineWidth(0.4);c.rect(cx,y-vert_hdr_h,acw_each,vert_hdr_h,fill=0,stroke=1)
+        if label:
+            c.saveState()
+            # Fit text: truncate if needed, use smaller font for long names
+            fs = 5.5 if len(label) < 18 else 5 if len(label) < 22 else 4.5
+            c.setFont("Helvetica-Bold",fs);c.setFillColor(white)
+            c.translate(cx+acw_each/2+1.5,y-vert_hdr_h+3);c.rotate(90)
+            c.drawString(0,0,label[:28])  # hard limit
+            c.restoreState()
+        cx+=acw_each
+    
+    # Sample Comment header
+    _hcell(c,cx,y-vert_hdr_h,comment_w,vert_hdr_h,"Sample Comment",fs=6)
+    cx+=comment_w
+    
+    # Preservation NC column header (rotated, part of sidebar)
+    c.setFillColor(LIGHT_BLUE);c.rect(cx,y-vert_hdr_h,pnc_w,vert_hdr_h,fill=1,stroke=0)
+    c.setStrokeColor(black);c.setLineWidth(0.4);c.rect(cx,y-vert_hdr_h,pnc_w,vert_hdr_h,fill=0,stroke=1)
     c.saveState()
-    c.setFont("Helvetica-Bold",5);c.setFillColor(white)
-    c.translate(cx+cn3/2+2,y-vert_hdr_h+3);c.rotate(90)
-    c.drawString(0,0,"NO3")
+    c.setFont("Helvetica",3.5);c.setFillColor(black)
+    c.translate(cx+pnc_w/2+1,y-vert_hdr_h+2);c.rotate(90)
+    c.drawString(0,0,"Preservation non-conformance")
     c.restoreState()
-    cx+=cn3
-
-    # ═══ ANALYSIS COLUMNS - TALL VERTICAL HEADERS ═══
-    for ac in acols:
-        c.setFillColor(HDR_BG);c.rect(cx,y-vert_hdr_h,acw,vert_hdr_h,fill=1,stroke=0)
-        c.setStrokeColor(black);c.setLineWidth(0.4);c.rect(cx,y-vert_hdr_h,acw,vert_hdr_h,fill=0,stroke=1)
-        c.saveState()
-        c.setFont("Helvetica-Bold",4.5);c.setFillColor(white)
-        c.translate(cx+acw/2+1.5,y-vert_hdr_h+3);c.rotate(90)
-        c.drawString(0,0,ac[:25])
-        c.restoreState()
-        cx+=acw
-
-    # Sample Comment header - tall to match
-    _hcell(c,cx,y-vert_hdr_h,comment_w,vert_hdr_h,"Sample Comment",fs=5.5)
-
-    # Sidebar for this section: "KELP Use Only" rotated + Preservation NC
-    sb_sample_y = y
-    # We'll draw the sidebar content after sample rows
-
-    y-=vert_hdr_h
-
+    c.saveState()
+    c.setFont("Helvetica",3.5);c.setFillColor(black)
+    c.translate(cx+pnc_w/2-4,y-vert_hdr_h+2);c.rotate(90)
+    c.drawString(0,0,"identified for sample.")
+    c.restoreState()
+    
+    y -= vert_hdr_h
+    
     # ═══ SAMPLE DATA ROWS ═══
-    srh=13  # normal row height
-    max_rows=12
+    srh=13  # row height (matches original ~19pt scaled)
+    max_rows=10  # original has 10 data rows
     sample_block_top = y
+    
     for ri in range(max_rows):
         s=samples[ri] if ri<len(samples) else {}
         cx=ML
+        
+        # Fixed columns
         vals=[
-            (s.get("sample_id",""),cid,"left"),
-            (s.get("matrix",""),cmx,"center"),
-            (s.get("comp_grab",""),ccg,"center"),
-            (s.get("start_date",""),csd,"center"),
-            (s.get("start_time",""),cst,"center"),
-            (s.get("end_date",""),ced,"center"),
-            (s.get("end_time",""),cet,"center"),
-            (s.get("num_containers",""),cnc,"center"),
-            (s.get("res_cl_result",""),crr,"center"),
-            (s.get("res_cl_units",""),cru,"center"),
-            (s.get("no3",""),cn3,"center"),
+            (s.get("sample_id",""),cid,"left",6),
+            (s.get("matrix",""),cmx,"center",6),
+            (s.get("comp_grab",""),ccg,"center",5.5),
+            (s.get("start_date",""),csd,"center",5.5),
+            (s.get("start_time",""),cst,"center",5.5),
+            (s.get("end_date",""),ced,"center",5.5),
+            (s.get("end_time",""),cet,"center",5.5),
+            (s.get("num_containers",""),cnc,"center",6),
+            (s.get("res_cl_result",""),crr,"center",5.5),
+            (s.get("res_cl_units",""),cru,"center",5),
         ]
-        for val,w,al in vals:
-            _cell(c,cx,y-srh,w,srh,val,fs=6,al=al)
+        for val,w,al,fs in vals:
+            _cell(c,cx,y-srh,w,srh,str(val),fs=fs,al=al)
             cx+=w
-        for ac in acols:
-            chk="X" if ac in s.get("analyses",[]) else ""
-            _cell(c,cx,y-srh,acw,srh,chk,fs=7,al="center",bold=True)
-            cx+=acw
-        _cell(c,cx,y-srh,comment_w,srh,s.get("comment",""),fs=5)
+        
+        # 10 Analysis columns - mark X where applicable
+        s_analyses = s.get("analyses",[])
+        for ai in range(NUM_ANALYSIS_COLS):
+            ac_name = acols[ai] if ai < len(acols) else ""
+            chk = "X" if ac_name and ac_name in s_analyses else ""
+            _cell(c,cx,y-srh,acw_each,srh,chk,fs=7,al="center",bold=True)
+            cx+=acw_each
+        
+        # Sample Comment
+        cmt = s.get("comment","")
+        _cell(c,cx,y-srh,comment_w,srh,cmt,fs=5.5)
+        cx+=comment_w
+        
+        # Preservation NC column (blank data cells)
+        _cell(c,cx,y-srh,pnc_w,srh)
+        
         y-=srh
+    
     sample_block_bottom = y
-
-    # ═══ SIDEBAR for sample table area ═══
-    sb_total_h = sb_sample_y - sample_block_bottom
-    _cell(c,ML+main_w,sb_sample_y-sb_total_h,sb_w,sb_total_h,bg=LIGHT_BLUE)
-    # "KELP Use Only" rotated text
-    c.saveState()
-    c.setFont("Helvetica-Bold",8);c.setFillColor(DARK_BLUE)
-    mid_sb_y = (sb_sample_y+sample_block_bottom)/2
-    c.translate(ML+main_w+12,mid_sb_y-20);c.rotate(90)
-    c.drawCentredString(0,0,"KELP Use Only")
-    c.restoreState()
-    # "Sample Comment" area in sidebar
-    c.setFont("Helvetica-Bold",6);c.setFillColor(black)
-    c.drawString(ML+main_w+22,sb_sample_y-15,"Sample Comment")
-    # "Preservation non-conformance" rotated on far right
-    c.saveState()
-    c.setFont("Helvetica",4.5);c.setFillColor(black)
-    c.translate(ML+main_w+sb_w-4,sample_block_bottom+5);c.rotate(90)
-    c.drawString(0,0,"Preservation non-conformance identified for sample.")
-    c.restoreState()
+    
+    # ═══ SIDEBAR for sample table area (KELP Use Only + Sample Comment label) ═══
+    # The sidebar in the original spans from the header down through the sample rows
+    # It contains: "KELP Use Only" rotated vertically, "Sample Comment" label
+    # In our layout, the sidebar is already drawn as part of the Pres NC column
+    # But we need the "KELP Use Only" text and "Sample Comment" text in the sidebar area
+    # These are on the LEFT side of the Pres NC column area
+    # Actually - looking at original: cols 21-22 = x=664..674 (10px gap) + x=674..763 (Sample Comment)
+    # The KELP Use Only and Sample Comment are in the sidebar header area
+    # The Pres NC text is on the far right edge
 
     # ═══ ADDITIONAL INSTRUCTIONS / REMARKS ═══
     rmkh=26
@@ -843,7 +886,7 @@ def main():
                         with ac2[j%min(len(an),4)]:
                             if st.checkbox(a[:30],value=True,key=f"a_{i}_{j}"):sa.append(a[:20]+"..." if len(a)>20 else a)
                 else:sa=ac
-                samples.append({"sample_id":sid,"matrix":MATRIX_CODES.get(mx,"DW"),"comp_grab":cg[:4].upper(),"start_date":cd2.strftime("%m/%d/%y") if cd2 else "","start_time":ct2.strftime("%H:%M") if ct2 else "","end_date":ed.strftime("%m/%d/%y") if ed else "","end_time":et.strftime("%H:%M") if et else "","num_containers":str(nc),"res_cl_result":rcl,"res_cl_units":rcu,"no3":"","analyses":sa,"comment":cmt})
+                samples.append({"sample_id":sid,"matrix":MATRIX_CODES.get(mx,"DW"),"comp_grab":cg[:4].upper(),"start_date":cd2.strftime("%m/%d/%y") if cd2 else "","start_time":ct2.strftime("%H:%M") if ct2 else "","end_date":ed.strftime("%m/%d/%y") if ed else "","end_time":et.strftime("%H:%M") if et else "","num_containers":str(nc),"res_cl_result":rcl,"res_cl_units":rcu,"analyses":sa,"comment":cmt})
         st.session_state["samples_data"]=samples;st.session_state["analysis_columns"]=ac
 
     with tab4:
