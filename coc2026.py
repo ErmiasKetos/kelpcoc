@@ -1,695 +1,857 @@
-"""KELP Chain-of-Custody Streamlit Application - v10
-Complete rebuild matching original template layout exactly.
-Key: Sidebar fields (Project Mgr, AcctNum, etc.) sit alongside
-     tall analysis column headers, NOT in form header.
 """
-import streamlit as st, io, os, datetime
-from reportlab.lib.pagesizes import letter, landscape
+KELP Chain-of-Custody v14
+Document ID: KELP-QMS-FORM-001-ChainOfCustody
+Version: 1.0
+
+v14 improvements over v13:
+  - Teal header bar with white title text
+  - Section divider labels (CLIENT INFORMATION, SAMPLE INFORMATION, etc.)
+  - Alternating row shading on data rows (very light gray)
+  - Row numbering (1-10) in left margin
+  - Bold outer borders, thinner inner grid lines
+  - Analysis columns show method in parentheses
+  - Default analysis column labels with EPA method references
+
+FONT HIERARCHY (fillable form best practices):
+  - Title:           Helvetica-Bold  11pt  white on teal
+  - Section labels:  Helvetica       6pt   (recedes visually)
+  - Table headers:   Helvetica-Bold  6-7pt
+  - User values:     Helvetica-Bold  8pt   (stands out as filled data)
+  - Legend/ref text:  Helvetica      5pt
+  - Footer:          Helvetica      5pt
+"""
+import io, os
 from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter, landscape
 from reportlab.lib.colors import black, white, HexColor
 from reportlab.lib.utils import ImageReader
+from reportlab.pdfbase.pdfmetrics import stringWidth
 
-# ═══ CONSTANTS ═══
-PW,PH=landscape(letter)
-ML,MR,MT,MB=15,15,12,12
-CW=PW-ML-MR
-HDR_BG=HexColor("#1F4E79")
-KELP_TEAL=HexColor("#008080")
-LIGHT_BLUE=HexColor("#DCE6F1")
+PW, PH = landscape(letter)  # 792 x 612
 
-# ═══ TEST CATALOGUE ═══
-TEST_CATALOGUE={
-    "PHYSICAL/GENERAL CHEMISTRY":["pH","Conductivity","Turbidity","TDS","TSS","Color","Odor","Temperature","Dissolved Oxygen","Hardness (SM2340C)","Alkalinity (SM2320B)","Specific Conductance"],
-    "METALS":["Arsenic","Barium","Cadmium","Chromium","Copper","Iron","Lead","Manganese","Mercury","Nickel","Selenium","Silver","Zinc","Aluminum","Antimony","Beryllium","Boron","Calcium","Cobalt","Magnesium","Molybdenum","Potassium","Sodium","Strontium","Thallium","Tin","Titanium","Uranium","Vanadium"],
-    "INORGANICS":["Chloride","Fluoride","Sulfate","Nitrate (as N)","Nitrite (as N)","Bromide","Phosphate"],
-    "NUTRIENTS":["Total Nitrogen","TKN","Ammonia","Total Phosphorus","Orthophosphate","BOD","COD","TOC"],
-    "ORGANICS":["TPH-GRO","TPH-DRO","BTEX","PAHs","PCBs","Pesticides","Herbicides","SVOCs","VOCs"],
-    "DISINFECTION":["Total Coliform","E. coli","Heterotrophic Plate Count","Chlorine Residual","Bromate","Chlorite","Haloacetic Acids","Total Trihalomethanes"],
-    "PFAS TESTING":["PFAS EPA 537.1","PFAS EPA 1633A","PFOS","PFOA","GenX"],
-    "PACKAGES":["Complete Homeowner","Mortgage/Real Estate","Basic Potability","Title 22","Ag Irrigation"],
-}
-CAT_SHORT = {
-    "PHYSICAL/GENERAL CHEMISTRY": "Physical/Gen Chem",
-    "METALS": "Metals", "INORGANICS": "Inorganics", "NUTRIENTS": "Nutrients",
-    "ORGANICS": "Organics", "DISINFECTION": "Disinfection",
-    "PFAS TESTING": "PFAS", "PACKAGES": "Packages",
-}
-MATRIX_CODES = {"Drinking Water (DW)":"DW","Ground Water (GW)":"GW","Wastewater (WW)":"WW","Surface Water (SW)":"SW","Product (P)":"P","Other (OT)":"OT"}
-DATA_DELIVERABLES = ["Level I (Std)","Level II","Level III","Level IV","Other"]
-RUSH_OPTIONS = ["Standard (5-10 Day)","Same Day","1 Day","2 Day","3 Day","4 Day","5 Day"]
-TIME_ZONES = ["PT","MT","CT","ET","AK"]
-LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kelp_logo.png")
+KELP_BLUE = HexColor("#1F4E79")   # KELP brand dark blue — headers, accents
+LABEL_GRAY = HexColor("#D6DCE4")  # KELP brand light gray — label cells
+HDR_BLUE = HexColor("#1F4E79")
+ROW_SHADE = HexColor("#F2F2F2")   # very light gray for alternating rows
+SECTION_BG = HexColor("#E8ECF0")  # subtle blue-gray tint for section labels
 
-# ═══ DRAWING HELPERS ═══
-def _cb(c,x,y,checked=False,sz=7):
-    c.setStrokeColor(black);c.setLineWidth(0.4);c.rect(x,y,sz,sz,fill=0,stroke=1)
+# Line weight hierarchy
+LW_OUTER = 1.0    # bold outer borders
+LW_SECTION = 0.7  # section dividers
+LW_INNER = 0.3    # thin inner grid
+
+# Default analysis columns with EPA method references
+DEFAULT_ANALYSIS_COLUMNS = [
+    "General Chem\n(SM 2310/4500)",
+    "Metals\n(EPA 200.8)",
+    "Inorganics/Anions\n(EPA 300.1)",
+    "PFAS\n(EPA 537/1633A)",
+    "Hardness\n(SM 2340C)",
+    "pH/Cond/Turb\n(EPA 150/120)",
+    "Nitrate/Nitrite\n(EPA 300.1)",
+    "Lead & Copper\n(EPA 200.8)",
+    "Coliform\n(SM 9223B)",
+    "Other\n(Specify)",
+]
+
+# Document ID
+DOC_ID = "KELP-QMS-FORM-001"
+DOC_TITLE = "Chain-of-Custody"
+DOC_VERSION = "1.0"
+DOC_EFF_DATE = "February 13, 2026"
+
+# ── Font sizes ──
+FS_TITLE = 11       # page title
+FS_LABEL = 6        # field labels (static, light)
+FS_VALUE = 8        # user-entered values (bold, prominent)
+FS_HEADER = 6.5     # table column headers
+FS_LEGEND = 5       # legend/reference text
+FS_FOOTER = 5       # footer compliance text
+FS_SUBTITLE = 7     # subtitle text
+
+# ── Global X boundaries ──
+LM = 17.3;  RM = 785.5
+COL2 = 237.4
+ACOL = 476.8
+KELP_STRIP = 665.0
+SB = 674.6
+PNC = 763.4
+
+AX = [476.8, 494.8, 513.5, 532.2, 551.2, 569.9, 588.7, 607.4, 626.1, 645.3, 664.3]
+
+# ── Helpers ──
+def R(c, x, y, w, h, fill=None, lw=LW_INNER):
+    if fill:
+        c.setFillColor(fill); c.rect(x, y, w, h, fill=1, stroke=0)
+    c.setStrokeColor(black); c.setLineWidth(lw)
+    c.rect(x, y, w, h, fill=0, stroke=1)
+
+def RBOX(c, x, y, w, h, fill=None):
+    """Draw a box with bold outer border."""
+    R(c, x, y, w, h, fill=fill, lw=LW_OUTER)
+
+def SECTION_LABEL(c, x, y, w, h, text):
+    """Draw a section divider label with teal-tinted background."""
+    c.setFillColor(SECTION_BG); c.rect(x, y, w, h, fill=1, stroke=0)
+    c.setStrokeColor(black); c.setLineWidth(LW_SECTION)
+    c.rect(x, y, w, h, fill=0, stroke=1)
+    c.setFont("Helvetica-Bold", 5.5); c.setFillColor(HDR_BLUE)
+    c.drawCentredString(x + w/2, y + h/2 - 2, text)
+
+def T(c, x, y, txt, fs=FS_LABEL, bold=False, font="Helvetica", maxw=None, color=black):
+    """Draw text. Default = label style (small, regular)."""
+    if not txt: return
+    fn = "Helvetica-Bold" if bold else font
+    s = float(fs)
+    t = str(txt)
+    if maxw:
+        while s > 4 and stringWidth(t, fn, s) > maxw:
+            s -= 0.3
+    c.setFont(fn, s); c.setFillColor(color)
+    c.drawString(x, y, t)
+
+def TV(c, x, y, txt, fs=FS_VALUE, maxw=None):
+    """Draw user VALUE text — bold, larger, stands out."""
+    T(c, x, y, txt, fs=fs, bold=True, maxw=maxw)
+
+def TC(c, x, y, w, txt, fs=FS_HEADER, bold=False, color=black):
+    if not txt: return
+    fn = "Helvetica-Bold" if bold else "Helvetica"
+    c.setFont(fn, fs); c.setFillColor(color)
+    c.drawCentredString(x + w/2, y, str(txt))
+
+def CB(c, x, y, checked=False, sz=7):
+    c.setStrokeColor(black); c.setLineWidth(0.3)
+    c.rect(x, y, sz, sz, fill=0, stroke=1)
     if checked:
-        c.setFont("Helvetica-Bold",sz);c.setFillColor(black);c.drawString(x+1,y+1,"X")
+        c.setFont("Helvetica-Bold", sz); c.setFillColor(black)
+        c.drawCentredString(x + sz/2, y + 0.5, "X")
 
-def _cell(c,x,y,w,h,text="",fs=6,al="left",bold=False,bg=None):
-    if bg:
-        c.setFillColor(bg);c.rect(x,y,w,h,fill=1,stroke=0)
-    c.setStrokeColor(black);c.setLineWidth(0.4);c.rect(x,y,w,h,fill=0,stroke=1)
-    if text:
-        fn="Helvetica-Bold" if bold else "Helvetica"
-        c.setFont(fn,fs);c.setFillColor(black)
-        if al=="center":c.drawCentredString(x+w/2,y+(h-fs)/2+1,str(text))
-        elif al=="right":c.drawRightString(x+w-2,y+(h-fs)/2+1,str(text))
-        else:c.drawString(x+2,y+(h-fs)/2+1,str(text))
+def VTEXT(c, x, y, txt, fs=FS_HEADER, bold=False):
+    fn = "Helvetica-Bold" if bold else "Helvetica"
+    c.saveState()
+    c.setFont(fn, fs); c.setFillColor(black)
+    c.translate(x, y); c.rotate(90)
+    c.drawString(0, 0, str(txt))
+    c.restoreState()
 
-def _lcell(c,x,y,w,h,label,value="",lfs=6,vfs=7):
-    c.setStrokeColor(black);c.setLineWidth(0.4);c.rect(x,y,w,h,fill=0,stroke=1)
-    c.setFont("Helvetica",lfs);c.setFillColor(black);c.drawString(x+2,y+(h-lfs)/2+1,label)
-    if value:
-        lw=c.stringWidth(label,"Helvetica",lfs)+4
-        c.setFont("Helvetica",vfs);c.drawString(x+lw,y+(h-vfs)/2+1,str(value))
+def HLINE(c, x1, x2, y, lw=0.4):
+    c.setStrokeColor(black); c.setLineWidth(lw); c.line(x1, y, x2, y)
 
-def _hcell(c,x,y,w,h,text="",fs=6):
-    """Header cell - NO fill, black text"""
-    c.setStrokeColor(black);c.setLineWidth(0.4);c.rect(x,y,w,h,fill=0,stroke=1)
-    if text:
-        c.setFont("Helvetica-Bold",fs);c.setFillColor(black)
-        lines = str(text).split('\n')
-        if len(lines) == 1:
-            c.drawCentredString(x+w/2,y+(h-fs)/2+1,text)
-        else:
-            for i, ln in enumerate(lines):
-                ly = y + h - fs*1.2 - i*fs*1.2
-                c.drawCentredString(x+w/2, ly, ln)
 
-# ═══ PDF GENERATION ═══
 def generate_coc_pdf(data, logo_path=None):
-    buf=io.BytesIO()
-    c=canvas.Canvas(buf,pagesize=landscape(letter))
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=(PW, PH))
     c.setTitle("KELP Chain-of-Custody")
-    y=PH-MT
+    d = data
+    g = lambda k, dflt="": d.get(k, dflt) or dflt
 
-    # ═══ COLUMN LAYOUT (scaled from original 769px total) ═══
-    # Original: x=17..786 = 769px
-    # Left fixed columns: 459px (Customer Sample ID thru Res Cl Units)
-    # 10 Analysis cols: 190px (19px each)
-    # Sample Comment: 89px (but in our layout this becomes part of sidebar)
-    # Pres NC: 23px
-    # Sidebar (KELP Use Only): x=665..763 = ~98px + Pres NC 23px = 121px
+    # ═══════════════════════════════════════════════════════════
+    # ZONE 1: HEADER  (RL y = 560..600)
+    # ═══════════════════════════════════════════════════════════
+    hdr_top = 598; hdr_bot = 560; hdr_h = hdr_top - hdr_bot
 
-    # In original, the sidebar right area = x=665..786 = 121px
-    # Left table area = x=17..665 = 648px
-    # Analysis columns within left area: x=476..665 = 189px (10 cols)
-    # Left fixed columns: x=17..476 = 459px
+    # Dark blue header bar — KELP brand
+    c.setFillColor(KELP_BLUE)
+    c.rect(LM, hdr_bot, RM - LM, hdr_h, fill=1, stroke=0)
 
-    OW = 769.0
-    TW = CW  # total width
-    sf = TW / OW
+    # Bold outer border
+    c.setStrokeColor(black); c.setLineWidth(LW_OUTER)
+    c.rect(LM, hdr_bot, RM - LM, hdr_h, fill=0, stroke=1)
 
-    # Sidebar area (KELP Use Only + Sample Comment + Pres NC)
-    sb_total = round(121 * sf)  # total sidebar width
-    pnc_w = round(23 * sf)     # Preservation NC column
-    kelp_sb_w = round(15 * sf) # "KELP Use Only" rotated label strip
-    sb_fields_w = sb_total - pnc_w - kelp_sb_w  # fields area (Project Mgr etc.)
-
-    # Main content area (left of sidebar)
-    main_w = TW - sb_total
-
-    # Left fixed columns
-    cid  = round(161 * sf)
-    cmx  = round(32 * sf)
-    ccg  = round(27 * sf)
-    csd  = round(55 * sf)
-    cst  = round(35 * sf)
-    ced  = round(50 * sf)
-    cet  = round(35 * sf)
-    cnc  = round(20 * sf)
-    crr  = round(23 * sf)
-    cru  = round(21 * sf)
-    fixed_total = cid+cmx+ccg+csd+cst+ced+cet+cnc+crr+cru
-
-    # Analysis columns
-    NUM_ANALYSIS_COLS = 10
-    acw_each = round(19 * sf)
-    analysis_total = acw_each * NUM_ANALYSIS_COLS
-
-    # Adjust: absorb rounding into cid
-    left_used = fixed_total + analysis_total
-    if left_used != main_w:
-        cid += (main_w - left_used)
-        fixed_total = cid+cmx+ccg+csd+cst+ced+cet+cnc+crr+cru
-
-    # X position where analysis columns start
-    analysis_start_x = ML + fixed_total
-
-    # ═══ HEADER ═══
-    hh=42
-    c.setStrokeColor(KELP_TEAL);c.setLineWidth(2);c.line(ML,y,ML+TW,y)
     if logo_path and os.path.exists(logo_path):
         try:
-            c.drawImage(ImageReader(logo_path),ML+3,y-hh+4,width=105,height=hh-8,preserveAspectRatio=True,mask='auto')
+            c.drawImage(ImageReader(logo_path), LM + 4, hdr_bot + 4,
+                        width=90, height=hdr_h - 8,
+                        preserveAspectRatio=True, mask='auto')
         except: pass
-    c.setFont("Helvetica-Bold",13);c.setFillColor(black)
-    c.drawCentredString(ML+main_w/2,y-16,"CHAIN-OF-CUSTODY")
-    c.setFont("Helvetica",7);c.drawCentredString(ML+main_w/2,y-27,"Chain-of-Custody is a LEGAL DOCUMENT - Complete all relevant fields")
 
-    # KELP USE ONLY header (top right) - original structure
-    kx = ML + main_w
-    c.setStrokeColor(black);c.setLineWidth(0.5);c.rect(kx,y-hh,sb_total,hh,fill=0,stroke=1)
-    c.setFont("Helvetica-Bold",7);c.setFillColor(black)
-    c.drawCentredString(kx+sb_total/2,y-10,"KELP USE ONLY- Affix Workorder Label Here")
-    c.setFont("Helvetica",6);c.drawString(kx+4,y-22,"KELP Ordering ID:")
-    c.setLineWidth(0.3);c.line(kx+68,y-24,kx+sb_total-4,y-24)
-    kid=data.get("kelp_ordering_id","")
-    if kid:
-        c.setFont("Helvetica-Bold",7);c.drawString(kx+70,y-22,kid)
-    c.setFont("Helvetica",5);c.drawString(kx+4,y-32,"Format: KELP-MMDDYY-####")
-    c.setStrokeColor(KELP_TEAL);c.setLineWidth(1.5);c.line(ML,y-hh,ML+TW,y-hh)
-    y-=hh
+    # White title text on teal
+    c.setFont("Helvetica-Bold", FS_TITLE); c.setFillColor(white)
+    c.drawCentredString((LM + ACOL)/2, hdr_top - 16, "CHAIN-OF-CUSTODY RECORD")
+    c.setFont("Helvetica", FS_SUBTITLE); c.setFillColor(white)
+    c.drawCentredString((LM + ACOL)/2, hdr_top - 28,
+       "Chain-of-Custody is a LEGAL DOCUMENT \u2014 Complete all relevant fields")
 
-    # ═══ CLIENT INFO ROWS ═══
-    rh=12
-    lw=230
-    cw2=main_w-lw  # center column width
+    # KELP USE ONLY box — white background inset on right
+    kelp_x = 570
+    c.setFillColor(white)
+    c.rect(kelp_x, hdr_bot + 2, RM - kelp_x - 2, hdr_h - 4, fill=1, stroke=0)
+    R(c, kelp_x, hdr_bot + 2, RM - kelp_x - 2, hdr_h - 4, lw=LW_SECTION)
+    T(c, kelp_x + 3, hdr_top - 12, "KELP USE ONLY", fs=6.5, bold=True, color=HDR_BLUE)
+    T(c, kelp_x + 3, hdr_top - 24, "KELP Ordering ID:", fs=FS_LABEL)
+    HLINE(c, kelp_x + 68, RM - 6, hdr_top - 26, lw=0.3)
+    kid = g("kelp_ordering_id")
+    if kid: TV(c, kelp_x + 70, hdr_top - 24, kid)
 
-    # Rows 1-5: client info (left + center)
-    rows=[
-        ("Company Name: ","company_name","Contact/Report To: ","contact_name"),
-        ("Street Address: ","street_address","Phone #: ","phone"),
-        ("","","E-Mail: ","email"),
-        ("","","Cc E-Mail: ","cc_email"),
-        ("Customer Project #: ","project_number","Invoice to: ","invoice_to"),
-    ]
-    for ll,lk,rl,rk in rows:
-        if ll:_lcell(c,ML,y-rh,lw,rh,ll,data.get(lk,""))
-        else:_cell(c,ML,y-rh,lw,rh)
-        _lcell(c,ML+lw,y-rh,cw2,rh,rl,data.get(rk,""))
-        y-=rh
-    # Sidebar: KELP USE ONLY blank label area spanning all client rows
-    c.setStrokeColor(black);c.setLineWidth(0.4)
-    c.rect(ML+main_w, y, sb_total, rh*5, fill=0, stroke=1)
+    # ═══════════════════════════════════════════════════════════
+    # ZONE 2: CLIENT INFO ROWS  (5 rows × 10pt)
+    # ═══════════════════════════════════════════════════════════
+    ci_top = hdr_bot; rh = 10
+    lw_ = COL2 - LM; cw_ = ACOL - COL2
 
-    # Row 6: Project Name | Invoice E-mail | Specify Container Size
-    _lcell(c,ML,y-rh,lw,rh,"Project Name: ",data.get("project_name",""))
-    inv_w = cw2*0.55
-    scs_w = cw2 - inv_w  # remainder for "Specify Container Size"
-    _lcell(c,ML+lw,y-rh,inv_w,rh,"Invoice E-mail: ",data.get("invoice_email",""))
-    _cell(c,ML+lw+inv_w,y-rh,scs_w,rh)
-    c.setFont("Helvetica-Bold",6);c.setFillColor(black)
-    c.drawCentredString(ML+lw+inv_w+scs_w/2,y-rh+3,"Specify Container Size")
-    # Container Size legend in sidebar
-    _cell(c,ML+main_w,y-rh*2,sb_total,rh*2)
-    c.setFont("Helvetica-Bold",5);c.setFillColor(black)
-    c.drawString(ML+main_w+3,y-4,"Container Size: (1) 1L, (2) 500mL, (3) 250mL,")
-    c.drawString(ML+main_w+3,y-11,"(4) 125mL, (5) 100mL, (6) Other")
-    y-=rh
+    # Section label bar
+    sec_h = 8
+    SECTION_LABEL(c, LM, ci_top - sec_h, ACOL - LM, sec_h, "CLIENT INFORMATION")
+    ci_top -= sec_h
 
-    # Row 7: Site Collection | Purchase Order | Identify Container Preservative Type
-    _lcell(c,ML,y-rh,lw,rh,"Site Collection Info/Facility ID (as applicable): ",data.get("site_info",""),lfs=5)
-    _lcell(c,ML+lw,y-rh,inv_w,rh,"Purchase Order (if applicable): ",data.get("purchase_order",""),lfs=5.5)
-    _cell(c,ML+lw+inv_w,y-rh,scs_w,rh)
-    c.setFont("Helvetica-Bold",6);c.setFillColor(black)
-    c.drawCentredString(ML+lw+inv_w+scs_w/2,y-rh+3,"Identify Container Preservative Type")
-    # Preservative legend (spans 3 rows in sidebar)
-    _cell(c,ML+main_w,y-rh*3,sb_total,rh*3)
-    c.setFont("Helvetica-Bold",5);c.setFillColor(black)
-    c.drawString(ML+main_w+3,y-4,"Preservative Types: (1) None, (2) HNO3, (3)")
-    c.drawString(ML+main_w+3,y-11,"H2SO4, (4) HCl, (5) NaOH, (6) Zn Acetate, (7)")
-    c.drawString(ML+main_w+3,y-18,"NaHSO4, (8) Sod.Thiosulfate, (9) Ascorbic Acid,")
-    c.drawString(ML+main_w+3,y-25,"(10) MeOH, (11) Other")
-    y-=rh
+    def ci_row(row_idx, l_label, l_val, c_label, c_val):
+        yt = ci_top - row_idx * rh; yb = yt - rh
+        R(c, LM, yb, lw_, rh)
+        if l_label:
+            T(c, LM + 2, yb + 2, l_label, fs=FS_LABEL)
+            tw = stringWidth(l_label, "Helvetica", FS_LABEL) + 3
+            TV(c, LM + tw, yb + 1, l_val, maxw=lw_ - tw - 2)
+        R(c, COL2, yb, cw_, rh)
+        if c_label:
+            T(c, COL2 + 2, yb + 2, c_label, fs=FS_LABEL)
+            tw = stringWidth(c_label, "Helvetica", FS_LABEL) + 3
+            TV(c, COL2 + tw, yb + 1, c_val, maxw=cw_ - tw - 2)
 
-    # Row 8: (blank left) | Quote # | Analysis Requested
-    _cell(c,ML,y-rh,lw,rh)
-    _lcell(c,ML+lw,y-rh,inv_w,rh,"Quote #: ",data.get("quote_number",""))
-    _cell(c,ML+lw+inv_w,y-rh,scs_w,rh)
-    c.setFont("Helvetica-Bold",6);c.setFillColor(black)
-    c.drawCentredString(ML+lw+inv_w+scs_w/2,y-rh+3,"Analysis Requested")
-    y-=rh
+    ci_row(0, "Company Name:", g("company_name"), "Contact/Report To:", g("contact_name"))
+    ci_row(1, "Street Address:", g("street_address"), "Phone #:", g("phone"))
+    ci_row(2, "", "", "E-Mail:", g("email"))
+    ci_row(3, "", "", "Cc E-Mail:", g("cc_email"))
+    ci_row(4, "Customer Project #:", g("project_number"), "Invoice to:", g("invoice_to"))
 
-    # ═══ TIME ZONE / COUNTY ROW ═══
-    tzh=11
-    _cell(c,ML,y-tzh,lw,tzh)
-    c.setFont("Helvetica",6);c.setFillColor(black)
-    c.drawString(ML+2,y-tzh+3,"Sample Collection Time Zone :")
-    st_tz=data.get("time_zone","PT")
-    for i,tz in enumerate(["AK","PT","MT","CT","ET"]):
-        cx2=ML+115+i*22
-        _cb(c,cx2,y-tzh+2,checked=(tz==st_tz),sz=6)
-        c.setFont("Helvetica",6);c.setFillColor(black);c.drawString(cx2+8,y-tzh+3,tz)
-    _lcell(c,ML+lw,y-tzh,main_w-lw,tzh,"County / State origin of sample(s): ",data.get("county_state",""),lfs=5.5)
-    # Sidebar row (preservative legend continues)
-    y-=tzh
+    rw_ = RM - ACOL
+    R(c, ACOL, ci_top - 5 * rh, rw_, 5 * rh)
 
-    # ═══ DATA DELIVERABLES / REGULATORY / RUSH ═══
-    rr=11
-    dd_w=130
-    reg_w=main_w-dd_w
-    sd=data.get("data_deliverable","Level I (Std)")
-    sr=data.get("rush","Standard (5-10 Day)")
+    # ═══════════════════════════════════════════════════════════
+    # ZONE 3: SPLIT ZONE — Client LEFT + 3 Label Rows RIGHT
+    # ═══════════════════════════════════════════════════════════
+    z3_top = ci_top - 5 * rh; z3_rh = 19
 
-    # Data Deliverables spanning 4 rows
-    _cell(c,ML,y-rr*4,dd_w,rr*4)
-    c.setFont("Helvetica",6);c.setFillColor(black)
-    c.drawString(ML+2,y-5,"Data Deliverables:")
-    dd_items=[("Level I (Std)",0),("Level II",0),("Level III",1),("Level IV",2),("Other",3)]
-    for label,row_idx in dd_items:
-        if row_idx<2:
-            bx=ML+4 if label=="Level I (Std)" else ML+60; by=y-14
+    # Section label
+    SECTION_LABEL(c, LM, z3_top - sec_h, ACOL - LM, sec_h, "PROJECT DETAILS")
+    z3_top -= sec_h
+    z3_bot = z3_top - 4 * z3_rh
+
+    # --- LEFT: 4 rows of client info ---
+    y6t = z3_top; y6b = y6t - z3_rh
+
+    # Row 6: Project Name | Invoice E-mail
+    R(c, LM, y6b, lw_, z3_rh)
+    T(c, LM + 2, y6b + 10, "Project Name:", fs=FS_LABEL)
+    TV(c, LM + 55, y6b + 10, g("project_name"), maxw=lw_ - 59)
+    R(c, COL2, y6b, cw_, z3_rh)
+    T(c, COL2 + 2, y6b + 10, "Invoice E-mail:", fs=FS_LABEL)
+    TV(c, COL2 + 60, y6b + 10, g("invoice_email"), maxw=cw_ - 64)
+
+    # Row 7: Site Collection | Purchase Order
+    y7t = y6b; y7b = y7t - z3_rh
+    R(c, LM, y7b, lw_, z3_rh)
+    T(c, LM + 2, y7b + 10, "Site Collection Info/Facility ID (as applicable):", fs=FS_LABEL)
+    TV(c, LM + 2, y7b + 1, g("site_info"), maxw=lw_ - 6)
+    R(c, COL2, y7b, cw_, z3_rh)
+    T(c, COL2 + 2, y7b + 10, "Purchase Order (if applicable):", fs=FS_LABEL)
+    TV(c, COL2 + 2, y7b + 1, g("purchase_order"), maxw=cw_ - 6)
+
+    # Row 8: (blank) | Quote #
+    y8t = y7b; y8b = y8t - z3_rh
+    R(c, LM, y8b, lw_, z3_rh)
+    R(c, COL2, y8b, cw_, z3_rh)
+    T(c, COL2 + 2, y8b + 10, "Quote #:", fs=FS_LABEL)
+    TV(c, COL2 + 35, y8b + 10, g("quote_number"), maxw=cw_ - 39)
+
+    # Row 9: County/State
+    y9t = y8b; y9b = y9t - z3_rh
+    R(c, LM, y9b, lw_, z3_rh)
+    T(c, LM + 2, y9b + 10, "County / State origin of sample(s):", fs=FS_LABEL)
+    TV(c, LM + 2, y9b + 1, g("county_state"), maxw=lw_ - 6)
+    R(c, COL2, y9b, cw_, z3_rh)
+
+    # --- RIGHT: Analysis columns area ---
+    acol_w = AX[10] - AX[0]
+    legend_x = KELP_STRIP; legend_w = RM - legend_x
+
+    # Transition row (alongside Row 6)
+    R(c, ACOL, y6b, KELP_STRIP - ACOL, z3_rh)
+    R(c, legend_x, y6b, legend_w, z3_rh)
+
+    # Row 1: Specify Container Size — merged write-in
+    R(c, AX[0], y7b, acol_w, z3_rh)
+    cs_val = g("container_size")
+    if cs_val:
+        T(c, AX[0] + 2, y7b + 10, "Specify Container Size:", fs=FS_LABEL)
+        TV(c, AX[0] + 95, y7b + 10, cs_val, maxw=acol_w - 100)
+    else:
+        TC(c, AX[0], y7b + 6, acol_w, "Specify Container Size", fs=FS_HEADER, bold=True)
+
+    # Container Size legend
+    R(c, legend_x, y7b, legend_w, z3_rh)
+    T(c, legend_x + 2, y7b + 10, "Container Size: (1) 1L, (2) 500mL,", fs=FS_LEGEND, bold=True)
+    T(c, legend_x + 2, y7b + 3, "(3) 250mL, (4) 125mL, (5) 100mL, (6) Other", fs=FS_LEGEND, bold=True)
+
+    # Row 2: Identify Container Preservative Type — merged write-in
+    R(c, AX[0], y8b, acol_w, z3_rh)
+    pres_val = g("preservative_type")
+    if pres_val:
+        T(c, AX[0] + 2, y8b + 10, "Identify Container Preservative Type:", fs=FS_LABEL)
+        TV(c, AX[0] + 145, y8b + 10, pres_val, maxw=acol_w - 150)
+    else:
+        TC(c, AX[0], y8b + 6, acol_w, "Identify Container Preservative Type", fs=FS_HEADER, bold=True)
+
+    # Preservative legend — ONE merged cell spanning rows 2 and 3 (y8b to y9b)
+    R(c, legend_x, y9b, legend_w, y7b - y9b)  # spans from y9b to y7b (2 rows)
+    T(c, legend_x + 2, y8b + 10, "Preservative: (1) None, (2) HNO3,", fs=4.5)
+    T(c, legend_x + 2, y8b + 4, "(3) H2SO4, (4) HCl, (5) NaOH,", fs=4.5)
+    T(c, legend_x + 2, y9b + 14, "(6) Zn Acetate, (7) NaHSO4,", fs=4.5)
+    T(c, legend_x + 2, y9b + 8, "(8) Sod.Thiosulfate, (9) Ascorbic Acid,", fs=4.5)
+    T(c, legend_x + 2, y9b + 2, "(10) MeOH, (11) Other", fs=4.5)
+
+    # Row 3: Analysis Requested — static header label
+    R(c, AX[0], y9b, acol_w, z3_rh)
+    TC(c, AX[0], y9b + 6, acol_w, "Analysis Requested", fs=FS_HEADER, bold=True)
+
+    # ═══════════════════════════════════════════════════════════
+    # ZONE 4: TimeZone+Deliverables LEFT | Tall Headers+Sidebar RIGHT
+    # ═══════════════════════════════════════════════════════════
+    z4_top = z3_bot
+    lrh = 14.5  # left-side row height
+
+    # Time Zone
+    ya_t = z4_top; ya_b = ya_t - lrh
+    R(c, LM, ya_b, ACOL - LM, lrh)
+    T(c, LM + 2, ya_b + 3, "Sample Collection Time Zone:", fs=FS_LABEL)
+    tz = g("time_zone", "PT")
+    for tz_name, tx in [("AK", 130), ("PT", 160), ("MT", 186), ("CT", 210), ("ET", 236)]:
+        CB(c, tx, ya_b + 2, checked=(tz_name == tz))
+        T(c, tx + 9, ya_b + 3, tz_name, fs=FS_LABEL)
+
+    # Data Deliverables block (5 rows)
+    dd_top = ya_b; dd_h = lrh * 5; dd_w = 130
+    reg_w = ACOL - LM - dd_w; rx = LM + dd_w
+
+    R(c, LM, dd_top - dd_h, dd_w, dd_h)
+    T(c, LM + 2, dd_top - 10, "Data Deliverables:", fs=FS_LABEL)
+    sd = g("data_deliverable", "Level I (Std)")
+    for lbl, bx, by in [
+        ("Level I (Std)", LM + 6, dd_top - 24),
+        ("Level II", LM + 68, dd_top - 24),
+        ("Level III", LM + 6, dd_top - 38),
+        ("Level IV", LM + 6, dd_top - 52),
+        ("Other", LM + 6, dd_top - 66),
+    ]:
+        CB(c, bx, by, checked=(lbl == sd))
+        T(c, bx + 9, by + 1, lbl, fs=FS_LABEL)
+
+    # DD Row 1: Regulatory + Reportable
+    R(c, rx, dd_top - lrh, reg_w, lrh)
+    T(c, rx + 2, dd_top - lrh + 3, "Regulatory Program (DW, RCRA, etc.):", fs=FS_LABEL)
+    TV(c, rx + 145, dd_top - lrh + 3, g("regulatory_program"), maxw=50)
+    rpx = rx + reg_w * 0.65
+    T(c, rpx, dd_top - lrh + 3, "Reportable", fs=FS_LABEL)
+    rv = g("reportable") == "Yes"
+    CB(c, rpx + 38, dd_top - lrh + 2, checked=rv); T(c, rpx + 47, dd_top - lrh + 3, "Yes", fs=FS_LABEL)
+    CB(c, rpx + 65, dd_top - lrh + 2, checked=not rv); T(c, rpx + 74, dd_top - lrh + 3, "No", fs=FS_LABEL)
+
+    # DD Row 2: Rush
+    R(c, rx, dd_top - lrh*2, reg_w, lrh)
+    T(c, rx + 2, dd_top - lrh*2 + 3, "Rush (Pre-approval required):", fs=FS_LABEL, bold=True)
+    sr = g("rush", "Standard (5-10 Day)")
+    for i, ro in enumerate(["Same Day", "1 Day", "2 Day", "3 Day", "4 Day"]):
+        rrx = rx + 120 + i * 40
+        CB(c, rrx, dd_top - lrh*2 + 2, checked=(ro == sr))
+        T(c, rrx + 9, dd_top - lrh*2 + 3, ro, fs=FS_LEGEND)
+
+    # DD Row 3: 5-Day + PWSID
+    h3 = reg_w * 0.5
+    R(c, rx, dd_top - lrh*3, h3, lrh)
+    CB(c, rx + 4, dd_top - lrh*3 + 2, checked=("5 Day" in sr))
+    T(c, rx + 14, dd_top - lrh*3 + 3, "5 Day", fs=FS_LABEL)
+    T(c, rx + 48, dd_top - lrh*3 + 3, "Other ____________", fs=FS_LABEL)
+    R(c, rx + h3, dd_top - lrh*3, reg_w - h3, lrh)
+    T(c, rx + h3 + 2, dd_top - lrh*3 + 3, "DW PWSID # or WW Permit #:", fs=FS_LEGEND)
+    TV(c, rx + h3 + 108, dd_top - lrh*3 + 3, g("pwsid"), fs=7, maxw=reg_w - h3 - 113)
+
+    # DD Row 4: Field Filtered
+    R(c, rx, dd_top - lrh*4, reg_w, lrh)
+    T(c, rx + 2, dd_top - lrh*4 + 3, "Field Filtered (if applicable):", fs=FS_LABEL)
+    ff = g("field_filtered", "No")
+    CB(c, rx + 120, dd_top - lrh*4 + 2, checked=(ff == "Yes")); T(c, rx + 129, dd_top - lrh*4 + 3, "Yes", fs=FS_LABEL)
+    CB(c, rx + 150, dd_top - lrh*4 + 2, checked=(ff == "No")); T(c, rx + 159, dd_top - lrh*4 + 3, "No", fs=FS_LABEL)
+
+    # DD Row 5: Analysis profile
+    R(c, rx, dd_top - lrh*5, reg_w, lrh)
+    T(c, rx + 2, dd_top - lrh*5 + 3, "Analysis:", fs=FS_LABEL)
+    TV(c, rx + 36, dd_top - lrh*5 + 3, g("analysis_profile_template"), maxw=reg_w - 40)
+
+    # Matrix Legend
+    ml_top = dd_top - dd_h; ml_h = 10
+    R(c, LM, ml_top - ml_h, ACOL - LM, ml_h)
+    T(c, LM + 2, ml_top - ml_h + 2,
+      "* Matrix: Drinking Water(DW), Ground Water(GW), Wastewater(WW), Product(P), Surface Water(SW), Other(OT)",
+      fs=FS_LEGEND)
+
+    # Table Column Headers
+    th_top = ml_top - ml_h; th_h = 32; grp_h = 12
+
+    for x0, x1, lbl in [
+        (17.3, 178.1, "Customer Sample ID"),
+        (178.1, 209.6, "Matrix\n*"),
+        (209.6, 237.4, "Comp /\nGrab"),
+        (412.2, 432.1, "#\nCont."),
+    ]:
+        R(c, x0, th_top - th_h, x1 - x0, th_h)
+        lines = lbl.split("\n")
+        if len(lines) == 1:
+            TC(c, x0, th_top - th_h/2 - 3, x1 - x0, lines[0], fs=FS_HEADER, bold=True)
         else:
-            bx=ML+4; by=y-14-row_idx*rr
-        _cb(c,bx,by,checked=(label==sd),sz=6)
-        c.setFont("Helvetica",5.5);c.setFillColor(black);c.drawString(bx+8,by+1,label)
+            TC(c, x0, th_top - th_h/2 + 3, x1 - x0, lines[0], fs=FS_HEADER, bold=True)
+            TC(c, x0, th_top - th_h/2 - 7, x1 - x0, lines[1], fs=FS_HEADER, bold=True)
 
-    # Row 1: Regulatory Program + Reportable
-    _cell(c,ML+dd_w,y-rr,reg_w,rr)
-    c.setFont("Helvetica",6);c.setFillColor(black)
-    c.drawString(ML+dd_w+2,y-rr+3,f"Regulatory Program (DW, RCRA, etc.) as applicable: {data.get('regulatory_program','')}")
-    rpx=ML+dd_w+reg_w*0.60
-    c.drawString(rpx,y-rr+3,"Reportable")
-    rv=data.get("reportable","No")=="Yes"
-    _cb(c,rpx+40,y-rr+2,checked=rv,sz=7);c.drawString(rpx+49,y-rr+3,"Yes")
-    _cb(c,rpx+68,y-rr+2,checked=not rv,sz=7);c.drawString(rpx+77,y-rr+3,"No")
+    sub_h = th_h - grp_h
+    # Composite Start
+    R(c, 237.4, th_top - grp_h, 327.0 - 237.4, grp_h)
+    TC(c, 237.4, th_top - grp_h + 2, 327.0 - 237.4, "Composite Start", fs=FS_LABEL, bold=True)
+    R(c, 237.4, th_top - th_h, 291.7 - 237.4, sub_h)
+    TC(c, 237.4, th_top - th_h + sub_h/2 - 3, 291.7 - 237.4, "Date", fs=FS_LABEL, bold=True)
+    R(c, 291.7, th_top - th_h, 327.0 - 291.7, sub_h)
+    TC(c, 291.7, th_top - th_h + sub_h/2 - 3, 327.0 - 291.7, "Time", fs=FS_LABEL, bold=True)
 
-    # Row 2: Rush
-    _cell(c,ML+dd_w,y-rr*2,reg_w,rr)
-    c.setFont("Helvetica-Bold",6);c.setFillColor(black)
-    c.drawString(ML+dd_w+2,y-rr*2+3,"Rush (Pre-approval required):")
-    for i,ro in enumerate(["Same Day","1 Day","2 Day","3 Day","4 Day"]):
-        rx=ML+dd_w+130+i*42
-        _cb(c,rx,y-rr*2+2,checked=(ro==sr),sz=7)
-        c.setFont("Helvetica",5.5);c.setFillColor(black);c.drawString(rx+9,y-rr*2+3,ro)
+    # Collected or Composite End
+    R(c, 327.0, th_top - grp_h, 412.2 - 327.0, grp_h)
+    TC(c, 327.0, th_top - grp_h + 2, 412.2 - 327.0, "Collected or Composite End", fs=FS_LEGEND, bold=True)
+    R(c, 327.0, th_top - th_h, 377.2 - 327.0, sub_h)
+    TC(c, 327.0, th_top - th_h + sub_h/2 - 3, 377.2 - 327.0, "Date", fs=FS_LABEL, bold=True)
+    R(c, 377.2, th_top - th_h, 412.2 - 377.2, sub_h)
+    TC(c, 377.2, th_top - th_h + sub_h/2 - 3, 412.2 - 377.2, "Time", fs=FS_LEGEND, bold=True)
 
-    # Row 3: 5 Day / Other | DW PWSID
-    half_reg=reg_w*0.55
-    _cell(c,ML+dd_w,y-rr*3,half_reg,rr)
-    _cb(c,ML+dd_w+4,y-rr*3+2,checked=("5 Day"==sr),sz=7)
-    c.setFont("Helvetica",5.5);c.setFillColor(black);c.drawString(ML+dd_w+14,y-rr*3+3,"5 Day")
-    c.drawString(ML+dd_w+50,y-rr*3+3,"Other ___________")
-    _cell(c,ML+dd_w+half_reg,y-rr*3,reg_w-half_reg,rr)
-    c.drawString(ML+dd_w+half_reg+2,y-rr*3+3,f"DW PWSID # or WW Permit # as applicable: {data.get('pwsid','')}")
-
-    # Row 4: Other | Field Filtered
-    half_reg2=reg_w*0.40
-    ff_w=reg_w*0.60
-    _cell(c,ML+dd_w,y-rr*4,half_reg2,rr)
-    c.setFont("Helvetica",5.5);c.setFillColor(black)
-    c.drawString(ML+dd_w+2,y-rr*4+3,"Other ___________")
-    _cell(c,ML+dd_w+half_reg2,y-rr*4,ff_w,rr)
-    c.drawString(ML+dd_w+half_reg2+2,y-rr*4+3,"Field Filtered (if applicable):")
-    ff=data.get("field_filtered","No")
-    ffx=ML+dd_w+half_reg2+100
-    _cb(c,ffx,y-rr*4+2,checked=(ff=="Yes"),sz=7);c.drawString(ffx+9,y-rr*4+3,"Yes")
-    _cb(c,ffx+28,y-rr*4+2,checked=(ff=="No"),sz=7);c.drawString(ffx+37,y-rr*4+3,"No")
-
-    # Sidebar for Deliverables rows (blank - preservative legend area continues / ends)
-    c.setStrokeColor(black);c.setLineWidth(0.4)
-    c.rect(ML+main_w,y-rr*4,sb_total,rr*4,fill=0,stroke=1)
-
-    y-=rr*4
-
-    # ═══ MATRIX LEGEND ═══
-    lgh=9
-    _cell(c,ML,y-lgh,main_w+sb_total,lgh)
-    c.setFont("Helvetica",5);c.setFillColor(black)
-    c.drawString(ML+2,y-lgh+2,"* Insert in Matrix box below: Drinking Water(DW), Ground Water(GW), Wastewater(WW), Product(P), Surface Water (SW), Other (OT)")
-    y-=lgh
-
-    # ═══════════════════════════════════════════════════════════════
-    # ═══ SAMPLE TABLE WITH INTEGRATED SIDEBAR ═══
-    # This is the key structure from the screenshot:
-    # LEFT side: fixed columns (Customer Sample ID thru Res Cl Units)
-    #   - Column headers are ~33pt tall (bottom portion)
-    # CENTER: 10 analysis columns
-    #   - Column headers are TALL (~130pt) with vertical rotated text
-    #   - Above the headers: 3 rows (Container Size, Preservative, Analysis) - 
-    #     BUT those are already drawn above in the form, so here we just have
-    #     the tall vertical analysis headers + blank cells for container/preservative numbers
-    # RIGHT sidebar: KELP Use Only strip + Project Mgr, AcctNum, Table#, Profile, Prelog, Sample Comment + Pres NC
-    # ═══════════════════════════════════════════════════════════════
-
-    samples=data.get("samples",[])
-    acols=data.get("analysis_columns",[])
-
-    # Heights
-    srh = 13  # sample data row height
-    max_rows = 10
-    left_hdr_h = 33  # left column header height (Customer Sample ID etc.)
-    
-    # The tall analysis header spans: 3 label rows + container/preservative blank rows + left header
-    # From screenshot: sidebar has ~6 fields (Project Mgr thru Sample Comment)
-    # Each field row ~18-20pt, plus Sample Comment is taller
-    # Total sidebar height = 5 fields * 18pt + Sample Comment ~33pt = ~123pt
-    # This equals the tall analysis header height
-    
-    sb_field_h = 18  # height per sidebar field row
-    sb_comment_h = 33  # Sample Comment row height
-    tall_hdr_h = sb_field_h * 5 + sb_comment_h  # = 123pt total
-    # The left headers only occupy the bottom left_hdr_h of this height
-    # The top portion (tall_hdr_h - left_hdr_h = 90pt) has no left-side headers
-    
-    table_top = y  # top of the entire table+sidebar block
-    
-    # ─── Draw 10 Analysis Column Headers (tall vertical) ───
-    ax = analysis_start_x
-    for ai in range(NUM_ANALYSIS_COLS):
-        label = acols[ai] if ai < len(acols) else ""
-        # Full tall cell
-        c.setStrokeColor(black);c.setLineWidth(0.4)
-        c.rect(ax, y-tall_hdr_h, acw_each, tall_hdr_h, fill=0, stroke=1)
-        if label:
-            c.saveState()
-            fs2 = 6 if len(label) < 18 else 5.5 if len(label) < 22 else 5
-            c.setFont("Helvetica-Bold",fs2);c.setFillColor(black)
-            c.translate(ax+acw_each/2+1.5, y-tall_hdr_h+3)
-            c.rotate(90)
-            c.drawString(0,0,label[:30])
-            c.restoreState()
-        ax += acw_each
-
-    # ─── Draw Left Fixed Column Headers (bottom portion only) ───
-    hdr_bottom_y = y - tall_hdr_h  # bottom of headers = top of data rows
-    left_hdr_top = hdr_bottom_y + left_hdr_h  # left headers start here
-    
-    # Top blank area above left headers (tall_hdr_h - left_hdr_h)
-    blank_top_h = tall_hdr_h - left_hdr_h
-    c.setStrokeColor(black);c.setLineWidth(0.4)
-    c.rect(ML, y-blank_top_h, fixed_total, blank_top_h, fill=0, stroke=1)
-    
-    # Left column headers in bottom portion
-    cx = ML
-    _hcell(c,cx,hdr_bottom_y,cid,left_hdr_h,"Customer Sample ID",fs=6)
-    cx+=cid
-    _hcell(c,cx,hdr_bottom_y,cmx,left_hdr_h,"Matrix\n*",fs=5)
-    cx+=cmx
-    _hcell(c,cx,hdr_bottom_y,ccg,left_hdr_h,"Comp /\nGrab",fs=5)
-    cx+=ccg
-    
-    # Composite Start (grouped)
-    csw=csd+cst
-    h1=14
-    _hcell(c,cx,hdr_bottom_y+left_hdr_h-h1,csw,h1,"Composite  Start",fs=5)
-    _hcell(c,cx,hdr_bottom_y,csd,left_hdr_h-h1,"Date",fs=5)
-    _hcell(c,cx+csd,hdr_bottom_y,cst,left_hdr_h-h1,"Time",fs=5)
-    cx+=csw
-    
-    # Collected/End
-    cew=ced+cet
-    _hcell(c,cx,hdr_bottom_y+left_hdr_h-h1,cew,h1,"Collected or Composite\nEnd",fs=4.5)
-    _hcell(c,cx,hdr_bottom_y,ced,left_hdr_h-h1,"Date",fs=5)
-    _hcell(c,cx+ced,hdr_bottom_y,cet,left_hdr_h-h1,"Time",fs=4.5)
-    cx+=cew
-    
-    _hcell(c,cx,hdr_bottom_y,cnc,left_hdr_h,"#\nCont.",fs=5)
-    cx+=cnc
-    
     # Residual Chlorine
-    rcw=crr+cru
-    _hcell(c,cx,hdr_bottom_y+left_hdr_h-h1,rcw,h1,"Residual\nChlorine",fs=5)
-    _hcell(c,cx,hdr_bottom_y,crr,left_hdr_h-h1,"Result",fs=5)
-    _hcell(c,cx+crr,hdr_bottom_y,cru,left_hdr_h-h1,"Units",fs=5)
-    
-    # ─── Draw Right Sidebar (alongside tall analysis headers) ───
-    sx = ML + main_w  # sidebar start x
-    
-    # "KELP Use Only" rotated strip
-    c.setStrokeColor(black);c.setLineWidth(0.4)
-    c.rect(sx, y-tall_hdr_h, kelp_sb_w, tall_hdr_h, fill=0, stroke=1)
-    c.saveState()
-    c.setFont("Helvetica-Bold",6);c.setFillColor(black)
-    mid_y = y - tall_hdr_h/2
-    c.translate(sx+kelp_sb_w/2+2, mid_y-25)
-    c.rotate(90)
-    c.drawString(0,0,"KELP Use Only")
-    c.restoreState()
-    
+    R(c, 432.1, th_top - grp_h, 476.8 - 432.1, grp_h)
+    TC(c, 432.1, th_top - grp_h + 2, 476.8 - 432.1, "Residual Chlorine", fs=FS_LEGEND, bold=True)
+    R(c, 432.1, th_top - th_h, 455.2 - 432.1, sub_h)
+    TC(c, 432.1, th_top - th_h + sub_h/2 - 3, 455.2 - 432.1, "Result", fs=FS_LEGEND, bold=True)
+    R(c, 455.2, th_top - th_h, 476.8 - 455.2, sub_h)
+    TC(c, 455.2, th_top - th_h + sub_h/2 - 3, 476.8 - 455.2, "Units", fs=FS_LEGEND, bold=True)
+
+    # --- RIGHT: Tall Vertical Analysis Headers ---
+    tall_bot = th_top - th_h; tall_h = z4_top - tall_bot
+    acols = d.get("analysis_columns", DEFAULT_ANALYSIS_COLUMNS)
+
+    for ai in range(10):
+        ax0 = AX[ai]; ax1 = AX[ai + 1]; aw = ax1 - ax0
+        R(c, ax0, tall_bot, aw, tall_h)
+        label = acols[ai] if ai < len(acols) else ""
+        if label:
+            # Split multi-line labels (e.g., "Metals\n(EPA 200.8)")
+            lines = label.split("\n")
+            if len(lines) >= 2:
+                # Line 1: test name (bold)
+                VTEXT(c, ax0 + aw/2 + 4, tall_bot + 3, lines[0], fs=FS_HEADER, bold=True)
+                # Line 2: method ref (regular, smaller)
+                VTEXT(c, ax0 + aw/2 - 4, tall_bot + 3, lines[1], fs=FS_LEGEND, bold=False)
+            else:
+                fs = FS_HEADER if len(label) < 20 else FS_LEGEND + 0.5
+                VTEXT(c, ax0 + aw/2 + 2, tall_bot + 3, label, fs=fs, bold=True)
+
+    # KELP Use Only strip
+    strip_w = SB - KELP_STRIP
+    R(c, KELP_STRIP, tall_bot, strip_w, tall_h)
+    VTEXT(c, KELP_STRIP + strip_w/2 + 2, tall_bot + tall_h/2 - 25, "KELP Use Only", fs=FS_LEGEND, bold=True)
+
     # Sidebar fields
-    fx = sx + kelp_sb_w
-    fy = y  # start from top
-    
-    sb_fields = [
-        ("Project Mgr.: ", data.get("project_manager","")),
-        ("AcctNum / Client ID: ", data.get("acct_num","")),
-        ("Table #: ", data.get("table_number","")),
-        ("Profile / Template: ", data.get("profile_template","")),
-        ("Prelog / Bottle Ord. ID: ", data.get("prelog_id","")),
-    ]
-    for label, val in sb_fields:
-        _lcell(c, fx, fy-sb_field_h, sb_fields_w, sb_field_h, label, val, lfs=5.5, vfs=6)
-        fy -= sb_field_h
-    
-    # Sample Comment (taller row)
-    _cell(c, fx, fy-sb_comment_h, sb_fields_w, sb_comment_h)
-    c.setFont("Helvetica-Bold",7);c.setFillColor(black)
-    c.drawCentredString(fx+sb_fields_w/2, fy-sb_comment_h/2-2, "Sample Comment")
-    
-    # Preservation NC column (far right, full height of tall header + all data rows)
-    pnc_x = sx + kelp_sb_w + sb_fields_w
-    total_table_h = tall_hdr_h + max_rows * srh
-    c.setStrokeColor(black);c.setLineWidth(0.4)
-    c.rect(pnc_x, y-total_table_h, pnc_w, total_table_h, fill=0, stroke=1)
-    # Rotated text
-    c.saveState()
-    c.setFont("Helvetica",4);c.setFillColor(black)
-    c.translate(pnc_x+pnc_w/2+2, y-total_table_h+3)
-    c.rotate(90)
-    c.drawString(0,0,"Preservation non-conformance identified for sample.")
-    c.restoreState()
-    
-    y -= tall_hdr_h  # move y to top of data rows
-    
-    # ═══ SAMPLE DATA ROWS ═══
+    sbf_w = PNC - SB; sbf_h = 18; fy = z4_top
+    for lbl, val in [
+        ("Project Mgr.:", g("project_manager")),
+        ("AcctNum / Client ID:", g("acct_num")),
+        ("Table #:", g("table_number")),
+        ("Profile / Template:", g("profile_template")),
+        ("Prelog / Bottle Ord. ID:", g("prelog_id")),
+    ]:
+        R(c, SB, fy - sbf_h, sbf_w, sbf_h)
+        T(c, SB + 2, fy - sbf_h + 8, lbl, fs=FS_LABEL)
+        lw2 = stringWidth(lbl, "Helvetica", FS_LABEL) + 3
+        TV(c, SB + lw2, fy - sbf_h + 8, val, fs=7, maxw=sbf_w - lw2 - 2)
+        fy -= sbf_h
+
+    sc_h = fy - tall_bot
+    R(c, SB, tall_bot, sbf_w, sc_h)
+    TC(c, SB, tall_bot + sc_h/2 - 3, sbf_w, "Sample Comment", fs=FS_HEADER, bold=True)
+
+    # Preservation NC column
+    data_rh = 19; max_rows = 10
+    pnc_bot = tall_bot - max_rows * data_rh
+    R(c, PNC, pnc_bot, RM - PNC, z4_top - pnc_bot)
+    VTEXT(c, PNC + (RM - PNC)/2 + 2, pnc_bot + 5,
+          "Preservation non-conformance identified for sample.", fs=4)
+
+    # ═══════════════════════════════════════════════════════════
+    # ZONE 5: SAMPLE DATA ROWS (with alternating shading + row numbers)
+    # ═══════════════════════════════════════════════════════════
+    data_top = tall_bot
+    samples = d.get("samples", [])
+
+    # Add a SAMPLE INFORMATION section label
+    SECTION_LABEL(c, LM, data_top - sec_h, ACOL - LM, sec_h, "SAMPLE INFORMATION")
+    data_top -= sec_h
+
     for ri in range(max_rows):
-        s=samples[ri] if ri<len(samples) else {}
-        cx=ML
-        
-        # Fixed columns
-        vals=[
-            (s.get("sample_id",""),cid,"left",6),
-            (s.get("matrix",""),cmx,"center",6),
-            (s.get("comp_grab",""),ccg,"center",5.5),
-            (s.get("start_date",""),csd,"center",5.5),
-            (s.get("start_time",""),cst,"center",5.5),
-            (s.get("end_date",""),ced,"center",5.5),
-            (s.get("end_time",""),cet,"center",5.5),
-            (s.get("num_containers",""),cnc,"center",6),
-            (s.get("res_cl_result",""),crr,"center",5.5),
-            (s.get("res_cl_units",""),cru,"center",5),
-        ]
-        for val,w,al,fs in vals:
-            _cell(c,cx,y-srh,w,srh,str(val),fs=fs,al=al)
-            cx+=w
-        
-        # 10 Analysis columns
-        s_analyses=s.get("analyses",[])
-        for ai in range(NUM_ANALYSIS_COLS):
-            ac_name=acols[ai] if ai<len(acols) else ""
-            chk="X" if ac_name and ac_name in s_analyses else ""
-            _cell(c,cx,y-srh,acw_each,srh,chk,fs=7,al="center",bold=True)
-            cx+=acw_each
-        
-        # Sample Comment (in sidebar area, below the comment header)
-        cmt=s.get("comment","")
-        _cell(c, sx+kelp_sb_w, y-srh, sb_fields_w, srh, cmt, fs=5.5)
-        
-        # Pres NC data cell (already covered by the big rect, draw divider)
-        c.setStrokeColor(black);c.setLineWidth(0.4)
-        c.line(pnc_x, y-srh, pnc_x+pnc_w, y-srh)
-        
-        # KELP Use Only strip data row divider  
-        c.line(sx, y-srh, sx+kelp_sb_w, y-srh)
-        
-        y-=srh
+        s = samples[ri] if ri < len(samples) else {}
+        ry = data_top - ri * data_rh; ryb = ry - data_rh
 
-    # ═══ CUSTOMER REMARKS ═══
-    rmh=30
-    _cell(c,ML,y-rmh,TW,rmh)
-    c.setFont("Helvetica-Bold",7);c.setFillColor(black)
-    c.drawString(ML+2,y-8,"Customer Remarks / Special Conditions / Possible Hazards:")
-    rmk=data.get("customer_remarks","")
-    if rmk:
-        c.setFont("Helvetica",6);c.drawString(ML+4,y-18,rmk[:150])
-    c.drawString(ML+2,y-rmh+3,"Additional Instructions: "+data.get("additional_instructions","")[:100])
-    y-=rmh
+        # Alternating row shading
+        if ri % 2 == 1:
+            c.setFillColor(ROW_SHADE)
+            c.rect(LM, ryb, RM - LM, data_rh, fill=1, stroke=0)
 
-    # ═══ RELINQUISHED/RECEIVED BLOCK ═══
-    rrh=14
-    c.setFont("Helvetica-Bold",7);c.setFillColor(black)
-    half=TW/2
-    labels=[
-        ("Relinquished by (signature / print):","Date:","Time:"),
-        ("Received by (signature / print):","Date:","Time:"),
+        # Row number in small font at left edge
+        c.setFont("Helvetica", 4.5); c.setFillColor(black)
+        c.drawCentredString(LM + 4, ryb + 7, str(ri + 1))
+
+        for x0, x1, val, align, fs in [
+            (17.3, 178.1, s.get("sample_id", ""), "left", FS_VALUE),
+            (178.1, 209.6, s.get("matrix", ""), "center", FS_VALUE),
+            (209.6, 237.4, s.get("comp_grab", ""), "center", 6),
+            (237.4, 291.7, s.get("start_date", ""), "center", 6),
+            (291.7, 327.0, s.get("start_time", ""), "center", 6),
+            (327.0, 377.2, s.get("end_date", ""), "center", 6),
+            (377.2, 412.2, s.get("end_time", ""), "center", 6),
+            (412.2, 432.1, s.get("num_containers", ""), "center", FS_VALUE),
+            (432.1, 455.2, s.get("res_cl_result", ""), "center", 6),
+            (455.2, 476.8, s.get("res_cl_units", ""), "center", FS_LEGEND),
+        ]:
+            R(c, x0, ryb, x1 - x0, data_rh)
+            if val:
+                if align == "center":
+                    TC(c, x0, ryb + 5, x1 - x0, str(val), fs=fs, bold=True)
+                else:
+                    TV(c, x0 + 10, ryb + 5, str(val), fs=fs, maxw=x1 - x0 - 14)
+
+        # Analysis X marks — match by first line of column label
+        s_analyses = s.get("analyses", [])
+        for ai in range(10):
+            ax0 = AX[ai]; ax1 = AX[ai + 1]
+            R(c, ax0, ryb, ax1 - ax0, data_rh)
+            ac_name = acols[ai] if ai < len(acols) else ""
+            # Match against first line (before \n) for backward compat
+            ac_short = ac_name.split("\n")[0] if ac_name else ""
+            if ac_short and ac_short in s_analyses:
+                TC(c, ax0, ryb + 5, ax1 - ax0, "X", fs=FS_VALUE, bold=True)
+
+        R(c, KELP_STRIP, ryb, strip_w, data_rh)
+        R(c, SB, ryb, sbf_w, data_rh)
+        cmt = s.get("comment", "")
+        if cmt: TV(c, SB + 2, ryb + 5, cmt, fs=FS_LEGEND, maxw=sbf_w - 4)
+
+    # ═══════════════════════════════════════════════════════════
+    # ZONE 6: BOTTOM
+    # ═══════════════════════════════════════════════════════════
+    bot_top = data_top - max_rows * data_rh
+
+    # Section label
+    SECTION_LABEL(c, LM, bot_top - sec_h, RM - LM, sec_h, "CHAIN OF CUSTODY RECORD / LABORATORY RECEIVING")
+    bot_top -= sec_h
+
+    # Instructions / Remarks
+    inst_h = 28; half_w = (RM - LM) / 2
+    R(c, LM, bot_top - inst_h, half_w, inst_h)
+    T(c, LM + 2, bot_top - 8, "Additional Instructions from KELP:", fs=FS_LABEL, bold=True)
+    TV(c, LM + 4, bot_top - 20, g("additional_instructions"), fs=6, maxw=half_w - 8)
+    R(c, LM + half_w, bot_top - inst_h, half_w, inst_h)
+    T(c, LM + half_w + 2, bot_top - 8, "Customer Remarks / Special Conditions / Possible Hazards:", fs=FS_LABEL, bold=True)
+    TV(c, LM + half_w + 4, bot_top - 20, g("customer_remarks"), fs=6, maxw=half_w - 8)
+
+    # Lab Receiving
+    lr_top = bot_top - inst_h; lr_h = 14
+    R(c, LM, lr_top - lr_h, RM - LM, lr_h)
+    T(c, LM + 2, lr_top - 10, "# Coolers:", fs=FS_LABEL)
+    TV(c, LM + 42, lr_top - 10, g("num_coolers"), fs=7)
+    T(c, LM + 70, lr_top - 10, "Thermometer ID:", fs=FS_LABEL)
+    TV(c, LM + 130, lr_top - 10, g("thermometer_id"), fs=7)
+    T(c, LM + 185, lr_top - 10, "Temp. (\u00b0C):", fs=FS_LABEL)
+    TV(c, LM + 225, lr_top - 10, g("temperature"), fs=7)
+    roi = g("received_on_ice", "Yes")
+    T(c, LM + 310, lr_top - 10, "Sample Received on ice:", fs=FS_LABEL)
+    CB(c, LM + 400, lr_top - 12, checked=(roi == "Yes")); T(c, LM + 409, lr_top - 10, "Yes", fs=FS_LABEL)
+    CB(c, LM + 432, lr_top - 12, checked=(roi == "No")); T(c, LM + 441, lr_top - 10, "No", fs=FS_LABEL)
+
+    # Relinquished/Received (3 rows)
+    rel_top = lr_top - lr_h; rel_h = 13
+    for row_i in range(3):
+        ry = rel_top - row_i * rel_h; ryb = ry - rel_h
+        rw1 = 210; dtw = 90
+        R(c, LM, ryb, rw1, rel_h)
+        T(c, LM + 2, ryb + 3, "Relinquished by/Company: (Signature)", fs=FS_LEGEND)
+        R(c, LM + rw1, ryb, dtw, rel_h)
+        T(c, LM + rw1 + 2, ryb + 3, "Date/Time:", fs=FS_LEGEND)
+        rcx = LM + rw1 + dtw
+        R(c, rcx, ryb, rw1, rel_h)
+        T(c, rcx + 2, ryb + 3, "Received by/Company: (Signature)", fs=FS_LEGEND)
+        R(c, rcx + rw1, ryb, dtw, rel_h)
+        T(c, rcx + rw1 + 2, ryb + 3, "Date/Time:", fs=FS_LEGEND)
+        rsx = rcx + rw1 + dtw; rsw = RM - rsx
+        R(c, rsx, ryb, rsw, rel_h)
+        if row_i == 0:
+            T(c, rsx + 2, ryb + 3, "Tracking #:", fs=FS_LEGEND)
+            TV(c, rsx + 42, ryb + 3, g("tracking_number"), fs=6, maxw=rsw - 46)
+        elif row_i == 1:
+            dm = g("delivery_method")
+            T(c, rsx + 2, ryb + 3, "Delivered by:", fs=FS_LEGEND)
+            avail = rsw - 55
+            for dn, dx in [("In-Person", rsx+52), ("FedEx", rsx+52+avail*0.30),
+                           ("UPS", rsx+52+avail*0.55), ("Other", rsx+52+avail*0.75)]:
+                CB(c, dx, ryb + 1, checked=(dn == dm), sz=6)
+                T(c, dx + 8, ryb + 3, dn, fs=FS_LEGEND)
+
+    # Disclaimer — with spacing below signature rows
+    disc_y = rel_top - 3 * rel_h - 10
+    T(c, LM + 5, disc_y,
+      "Submitting a sample via this chain of custody constitutes acknowledgment and acceptance of the KELP\u2019s Terms and Conditions",
+      fs=FS_LABEL)
+
+    # ═══════════════════════════════════════════════════════════
+    # BOLD OUTER BORDER around entire form
+    # ═══════════════════════════════════════════════════════════
+    form_bot = disc_y - 4
+    c.setStrokeColor(black); c.setLineWidth(LW_OUTER)
+    c.rect(LM, form_bot, RM - LM, hdr_top - form_bot, fill=0, stroke=1)
+
+    # ═══════════════════════════════════════════════════════════
+    # FOOTER — Document ID, Version, Compliance Notice
+    # ═══════════════════════════════════════════════════════════
+    footer_y = 6
+    c.setFont("Helvetica", FS_FOOTER); c.setFillColor(black)
+    c.drawString(LM, footer_y,
+                 f"{DOC_ID}-{DOC_TITLE.replace(' ', '')}  |  Version {DOC_VERSION}  |  Effective: {DOC_EFF_DATE}")
+    c.drawRightString(RM, footer_y,
+                      "CONTROLLED DOCUMENT - Do not copy without authorization  |  Page 1 of 2")
+    # thin line above footer
+    c.setStrokeColor(black); c.setLineWidth(0.3)
+    c.line(LM, footer_y + 8, RM, footer_y + 8)
+
+    # ═══════════════════════════════════════════════════════════
+    # PAGE 2: COC FILLING INSTRUCTIONS
+    # ═══════════════════════════════════════════════════════════
+    c.showPage()
+
+    # Title
+    c.setFont("Helvetica-Bold", 14); c.setFillColor(black)
+    c.drawCentredString(PW/2, PH - 40, "Chain of Custody (COC) Instructions")
+    c.setFont("Helvetica", 10); c.setFillColor(black)
+    c.drawCentredString(PW/2, PH - 56, "Complete all relevant fields on the COC form. Incomplete information may cause delays.")
+
+    # Two-column layout
+    col1_x = 30; col2_x = 420; col_w = 370
+    bfs = 9.5   # body font size
+    hfs = 10    # heading font size
+    bul = 9     # bullet indent
+
+    def sec_heading(yp, text, col_x=col1_x):
+        c.setFont("Helvetica-Bold", hfs); c.setFillColor(HDR_BLUE)
+        c.drawString(col_x, yp, text)
+        return yp - 14
+
+    def bullet(yp, label, desc, col_x=col1_x, w=col_w):
+        c.setFont("Helvetica-Bold", bfs); c.setFillColor(black)
+        c.drawString(col_x + bul, yp, "\u2022")
+        lbl_w = stringWidth(label, "Helvetica-Bold", bfs)
+        c.drawString(col_x + bul + 8, yp, label)
+        c.setFont("Helvetica", bfs)
+        # Wrap description
+        remaining = desc
+        first = True
+        x_start = col_x + bul + 8 + lbl_w + 3 if first else col_x + bul + 8
+        avail_w = w - bul - 8 - (lbl_w + 3 if first else 0)
+        while remaining:
+            # Simple word wrapping
+            words = remaining.split()
+            line = ""
+            rest_words = []
+            for i, word in enumerate(words):
+                test = line + (" " if line else "") + word
+                if stringWidth(test, "Helvetica", bfs) <= avail_w:
+                    line = test
+                else:
+                    rest_words = words[i:]
+                    break
+            else:
+                rest_words = []
+            c.drawString(x_start, yp, line)
+            remaining = " ".join(rest_words)
+            if remaining:
+                yp -= 12
+                x_start = col_x + bul + 8
+                avail_w = w - bul - 8
+                first = False
+        return yp - 14
+
+    # Column 1: Sections 1 & 2
+    y = PH - 85
+    y = sec_heading(y, "1. Client & Project Information:")
+    items1 = [
+        ("Company Name:", "Your company\u2019s name."),
+        ("Street Address:", "Your mailing address."),
+        ("Contact/Report To:", "Person designated to receive results."),
+        ("Customer Project # and Project Name:", "Your project reference number and name."),
+        ("Site Collection Info/Facility ID:", "Project location or facility ID."),
+        ("Time Zone:", "Sample collection time zone (e.g., AK, PT, MT, CT, ET) for accurate hold times."),
+        ("Purchase Order #:", "Your PO number for invoicing, if applicable."),
+        ("Invoice To:", "Contact person for the invoice."),
+        ("Invoice Email:", "Email address for the invoice."),
+        ("Phone #:", "Your contact phone number."),
+        ("E-mail:", "Your email for correspondence and the final report."),
+        ("Data Deliverable:", "Required data deliverable level (Standard, Level II, III, IV, Other)."),
+        ("Field Filtered:", "Indicate if samples were filtered in the field (Yes/No)."),
+        ("Quote #:", "Quote number, if applicable."),
+        ("DW PWSID # or WW Permit #:", "Relevant drinking water or wastewater permit numbers, if applicable."),
     ]
-    for i in range(3):
-        for j,(l1,l2,l3) in enumerate(labels):
-            bx=ML+j*half
-            _cell(c,bx,y-rrh,half*0.50,rrh)
-            _cell(c,bx+half*0.50,y-rrh,half*0.25,rrh)
-            _cell(c,bx+half*0.75,y-rrh,half*0.25,rrh)
-            c.setFont("Helvetica",5.5);c.setFillColor(black)
-            c.drawString(bx+2,y-rrh+4,l1)
-            c.drawString(bx+half*0.50+2,y-rrh+4,l2)
-            c.drawString(bx+half*0.75+2,y-rrh+4,l3)
-        y-=rrh
+    for lbl, desc in items1:
+        y = bullet(y, lbl, desc)
 
-    # ═══ LAB RECEIVING (bottom) ═══
-    lrh=35
-    _cell(c,ML,y-lrh,TW,lrh)
-    c.setFont("Helvetica-Bold",8);c.setFillColor(black)
-    c.drawString(ML+2,y-8,"Lab Receiving (Cooler / Shipping Conditions)")
-    fields=[
-        (f"No. of Coolers: {data.get('num_coolers','')}",0.18),
-        (f"Thermometer ID: {data.get('thermometer_id','')}",0.22),
-        (f"Temperature (\u00b0C): {data.get('temperature','')}",0.18),
+    y -= 4
+    y = sec_heading(y, "2. Sample Information:")
+    items2 = [
+        ("Customer Sample ID:", "Unique sample identifier for the report."),
+        ("Collected Date:", "Sample collection date (provide start and end dates for composites)."),
+        ("Collected Time:", "Sample collection time (provide start and end times for composites)."),
+        ("Comp/Grab:", "\"GRAB\" for single-point collection; \"COMP\" for combined samples."),
+        ("Matrix:", "Sample type (e.g., DW, GW, WW, P, SW, OT)."),
+        ("Container Size:", "Specify size (e.g., 1L, 500mL, Other)."),
     ]
-    fx2=ML+4; fy2=y-18
-    for txt,pct in fields:
-        w2=TW*pct
-        c.setFont("Helvetica",6);c.drawString(fx2,fy2,txt)
-        fx2+=w2
-    # Received on ice
-    c.drawString(fx2,fy2,"Received on ice: ")
-    ri_val=data.get("received_on_ice","Yes")
-    _cb(c,fx2+55,fy2-1,checked=(ri_val=="Yes"),sz=7);c.drawString(fx2+64,fy2,"Yes")
-    _cb(c,fx2+80,fy2-1,checked=(ri_val=="No"),sz=7);c.drawString(fx2+89,fy2,"No")
-    _cb(c,fx2+105,fy2-1,checked=(ri_val=="N/A"),sz=7);c.drawString(fx2+114,fy2,"N/A")
-    # Bottom row
-    c.setFont("Helvetica",6)
-    c.drawString(ML+4,y-lrh+4,f"Tracking #: {data.get('tracking_number','')}")
-    c.drawString(ML+TW*0.35,y-lrh+4,f"Delivery Method: {data.get('delivery_method','')}")
-    c.drawString(ML+TW*0.65,y-lrh+4,"Custody Seal Intact:  \u2610 Yes  \u2610 No  \u2610 N/A")
+    for lbl, desc in items2:
+        y = bullet(y, lbl, desc)
 
-    c.showPage();c.save();buf.seek(0);return buf
+    # Column 2: Sections 2 continued, 3, 4
+    y2 = PH - 85
+    items2b = [
+        ("Container Preservative Type:", "Specify preservative (e.g., None, HNO3, H2SO4, Other)."),
+        ("Analysis Requested:", "List tests or method numbers and check boxes for applicable samples."),
+        ("Sample Comment:", "Notes about individual samples; identify MS/MSD samples here."),
+        ("Residual Chlorine:", "Record results and units if measured."),
+    ]
+    for lbl, desc in items2b:
+        y2 = bullet(y2, lbl, desc, col_x=col2_x, w=col_w)
+
+    y2 -= 4
+    y2 = sec_heading(y2, "3. Additional Information & Instructions:", col_x=col2_x)
+    items3 = [
+        ("Customer Remarks/Hazards:", "Note special instructions, potential hazards (attach SDS if possible), or requests for extra report copies."),
+        ("Rush Request:", "For expedited results, select an option (Same Day to 5 Day). Pre-approval from the lab is required; surcharges apply."),
+        ("Relinquished By/Received By:", "Sign and date at each transfer of custody."),
+    ]
+    for lbl, desc in items3:
+        y2 = bullet(y2, lbl, desc, col_x=col2_x, w=col_w)
+
+    y2 -= 4
+    y2 = sec_heading(y2, "4. Sample Acceptance Policy Summary:", col_x=col2_x)
+    c.setFont("Helvetica", bfs); c.setFillColor(black)
+    c.drawString(col2_x, y2, "For samples to be accepted, ensure:")
+    y2 -= 14
+    acceptance = [
+        "Complete COC documentation.",
+        "Readable, unique sample ID on containers (indelible ink).",
+        "Appropriate containers and sufficient volume.",
+        "Receipt within holding time and temperature requirements.",
+        "Containers are in good condition, seals intact (if used).",
+        "Proper preservation, no headspace in volatile water samples.",
+        "Adequate volume for MS/MSD if required.",
+    ]
+    for item in acceptance:
+        c.setFont("Helvetica", bfs)
+        c.drawString(col2_x + bul, y2, "\u2022  " + item)
+        y2 -= 13
+
+    y2 -= 6
+    c.setFont("Helvetica", 8.5); c.setFillColor(black)
+    # Wrap the closing paragraph
+    closing = ("Failure to meet these may result in data qualifiers. A detailed policy is "
+               "available from your Project Manager. Submitting samples implies acceptance "
+               "of KELP Terms and Conditions.")
+    words = closing.split()
+    line = ""; cy = y2
+    for word in words:
+        test = line + (" " if line else "") + word
+        if stringWidth(test, "Helvetica", 8.5) <= col_w:
+            line = test
+        else:
+            c.drawString(col2_x, cy, line)
+            cy -= 12; line = word
+    if line:
+        c.drawString(col2_x, cy, line)
+
+    # Page 2 footer
+    c.setFont("Helvetica", FS_FOOTER); c.setFillColor(black)
+    c.setStrokeColor(black); c.setLineWidth(0.3)
+    c.line(LM, 14, RM, 14)
+    c.drawString(LM, 6,
+                 f"{DOC_ID}-{DOC_TITLE.replace(' ', '')}  |  Version {DOC_VERSION}  |  Effective: {DOC_EFF_DATE}")
+    c.drawRightString(RM, 6,
+                      "CONTROLLED DOCUMENT - Do not copy without authorization  |  Page 2 of 2")
+
+    c.showPage()
+    c.save()
+    buf.seek(0)
+    return buf
 
 
-# ═══ STREAMLIT UI ═══
-def main():
-    st.set_page_config(page_title="KELP Chain-of-Custody",layout="wide")
-    st.title("KELP Chain-of-Custody Generator")
+# ═══ Quick Test ═══
+if __name__ == "__main__":
+    d = {
+        "company_name": "Luna Owners Association",
+        "street_address": "123 Main St, Sunnyvale CA 94086",
+        "phone": "408-555-1234",
+        "email": "test@example.com",
+        "cc_email": "cc@example.com",
+        "contact_name": "ermias@ketos.co",
+        "project_number": "12345",
+        "project_name": "03-05-2025",
+        "invoice_to": "Same",
+        "invoice_email": "billing@luna.com",
+        "site_info": "Bldg A",
+        "purchase_order": "PO-9876",
+        "quote_number": "Q-555",
+        "county_state": "Santa Clara, CA",
+        "time_zone": "PT",
+        "data_deliverable": "Level I (Std)",
+        "regulatory_program": "DW",
+        "reportable": "No",
+        "rush": "Standard (5-10 Day)",
+        "pwsid": "CA0110005",
+        "field_filtered": "No",
+        "analysis_profile_template": "Homeowner",
+        "preservative_type": "(1) None, (2) HNO3",
+        "container_size": "(1) 1L, (2) 500mL",
+        "additional_instructions": "Rush if possible",
+        "customer_remarks": "Samples from bldg A lobby fountain",
+        "num_coolers": "1",
+        "thermometer_id": "T-001",
+        "temperature": "4.2",
+        "received_on_ice": "Yes",
+        "tracking_number": "FX-12345",
+        "delivery_method": "FedEx",
+        "project_manager": "J. Smith",
+        "acct_num": "ACCT-001",
+        "table_number": "T1",
+        "profile_template": "Homeowner",
+        "prelog_id": "PRE-001",
+        "kelp_ordering_id": "KELP-021226-0001",
+        "samples": [
+            {"sample_id": "Tap-A-001", "matrix": "DW", "comp_grab": "GRAB",
+             "start_date": "02/12/26", "start_time": "07:56",
+             "end_date": "02/12/26", "end_time": "07:56",
+             "num_containers": "2", "res_cl_result": "0.5", "res_cl_units": "mg/L",
+             "analyses": ["General Chem", "Metals", "PFAS"],
+             "comment": "Kitchen tap"},
+            {"sample_id": "Tap-B-002", "matrix": "DW", "comp_grab": "GRAB",
+             "start_date": "02/12/26", "start_time": "08:15",
+             "end_date": "02/12/26", "end_time": "08:15",
+             "num_containers": "2", "res_cl_result": "0.3", "res_cl_units": "mg/L",
+             "analyses": ["General Chem", "Metals", "PFAS"],
+             "comment": "Bathroom"},
+            {"sample_id": "Well-003", "matrix": "GW", "comp_grab": "GRAB",
+             "start_date": "02/12/26", "start_time": "09:00",
+             "end_date": "02/12/26", "end_time": "09:00",
+             "num_containers": "3",
+             "analyses": ["General Chem", "Inorganics/Anions", "Hardness"],
+             "comment": ""},
+        ],
+        # Use defaults — method references will be auto-populated
+        # "analysis_columns" omitted to use DEFAULT_ANALYSIS_COLUMNS
+    }
 
-    c1,c2=st.columns(2)
-    with c1:
-        st.subheader("Client Information")
-        cn=st.text_input("Company Name","Luna Owners Association")
-        sa=st.text_input("Street Address","")
-        pn=st.text_input("Customer Project #","12345")
-        prn=st.text_input("Project Name","03-05-2025")
-        si=st.text_input("Site Collection Info","")
-    with c2:
-        ct=st.text_input("Contact/Report To","ermias@ketos.co")
-        ph=st.text_input("Phone #","")
-        em=st.text_input("E-Mail","")
-        cem=st.text_input("Cc E-Mail","")
-        it=st.text_input("Invoice to","")
-        ie=st.text_input("Invoice E-mail","")
-
-    st.subheader("Test Delivery & Regulatory")
-    c3,c4,c5=st.columns(3)
-    with c3:
-        dd=st.selectbox("Data Deliverables",DATA_DELIVERABLES)
-        tz=st.selectbox("Time Zone",TIME_ZONES,index=1)
-    with c4:
-        rush=st.selectbox("Rush",RUSH_OPTIONS)
-        rp=st.text_input("Regulatory Program","")
-    with c5:
-        rep=st.radio("Reportable",["Yes","No"],index=1,horizontal=True)
-        ff=st.radio("Field Filtered",["Yes","No"],index=1,horizontal=True)
-        pw=st.text_input("DW PWSID / WW Permit #","")
-
-    st.subheader("Additional Info")
-    c6,c7=st.columns(2)
-    with c6:
-        cs=st.text_input("County / State origin","")
-        po=st.text_input("Purchase Order","")
-        qn=st.text_input("Quote #","")
-    with c7:
-        pm=st.text_input("Project Manager","")
-        an2=st.text_input("AcctNum / Client ID","")
-        tn=st.text_input("Table #","")
-        pt=st.text_input("Profile / Template","")
-        pl=st.text_input("Prelog / Bottle Ord. ID","")
-        koid=st.text_input("KELP Ordering ID","")
-
-    # ═══ TESTS & SAMPLES ═══
-    st.subheader("Select Tests")
-    s2={}
-    for cat,tests in TEST_CATALOGUE.items():
-        with st.expander(cat):
-            for t in tests:
-                if st.checkbox(t,key=f"test_{t}"):
-                    s2[t]={"method":cat}
-
-    # Group selected tests by category
-    cat_tests={}
-    for tname in s2:
-        found_cat=None
-        for cat,tests in TEST_CATALOGUE.items():
-            if tname in tests:
-                found_cat=cat;break
-        if found_cat is None:found_cat="OTHER"
-        cat_tests.setdefault(found_cat,[]).append(tname)
-
-    ac=[CAT_SHORT.get(cat,cat[:18]) for cat in cat_tests.keys()]
-    test_to_cat={}
-    for cat,tnames in cat_tests.items():
-        for tn in tnames:
-            test_to_cat[tn]=CAT_SHORT.get(cat,cat[:18])
-
-    st.subheader("Sample Details")
-    n_samples=st.number_input("Number of Samples",1,10,2)
-    mx=st.selectbox("Default Matrix",list(MATRIX_CODES.keys()))
-    mx_code=MATRIX_CODES[mx]
-    cg=st.selectbox("Comp/Grab",["GRAB","COMP"])
-
-    sample_list=[]
-    for i in range(n_samples):
-        with st.expander(f"Sample {i+1}",expanded=(i<2)):
-            sid=st.text_input("Sample ID",f"Sample-{i+1}",key=f"sid_{i}")
-            an=list(s2.keys())
-            sa_cats=set()
-            for j,a in enumerate(an):
-                if st.checkbox(a[:30],value=True,key=f"a_{i}_{j}"):
-                    cat_name=test_to_cat.get(a,a)
-                    sa_cats.add(cat_name)
-            sa_list=list(sa_cats)
-            now=datetime.datetime.now()
-            sd2=st.text_input("Collection Date",now.strftime("%m/%d/%y"),key=f"sd_{i}")
-            st2=st.text_input("Collection Time",now.strftime("%H:%M"),key=f"st_{i}")
-            cmt=st.text_input("Comment","",key=f"cmt_{i}")
-            sample_list.append({"sample_id":sid,"matrix":mx_code,"comp_grab":cg,
-                "start_date":sd2,"start_time":st2,"end_date":sd2,"end_time":st2,
-                "num_containers":"1","res_cl_result":"","res_cl_units":"",
-                "analyses":sa_list,"comment":cmt})
-
-    # ═══ SHIPPING ═══
-    st.subheader("Shipping / Receiving")
-    c8,c9=st.columns(2)
-    with c8:
-        nc=st.text_input("# Coolers","1")
-        tid=st.text_input("Thermometer ID","")
-        tmp=st.text_input("Temperature (°C)","")
-    with c9:
-        roi=st.radio("Received on Ice",["Yes","No","N/A"],horizontal=True)
-        trk=st.text_input("Tracking #","")
-        dm=st.selectbox("Delivery Method",["FedEX","UPS","USPS","Hand Delivery","Courier","Other"])
-
-    rmk=st.text_area("Customer Remarks / Special Conditions","")
-    ai2=st.text_input("Additional Instructions","")
-
-    if st.button("Generate CoC PDF",type="primary"):
-        d={
-            "company_name":cn,"street_address":sa,"phone":ph,"email":em,
-            "cc_email":cem,"contact_name":ct,"project_number":pn,"project_name":prn,
-            "invoice_to":it,"invoice_email":ie,"site_info":si,"purchase_order":po,
-            "quote_number":qn,"county_state":cs,"time_zone":tz,
-            "data_deliverable":dd,"regulatory_program":rp,"reportable":rep,
-            "rush":rush,"pwsid":pw,"field_filtered":ff,
-            "additional_instructions":ai2,"customer_remarks":rmk,
-            "num_coolers":nc,"thermometer_id":tid,"temperature":tmp,
-            "received_on_ice":roi,"tracking_number":trk,"delivery_method":dm,
-            "project_manager":pm,"acct_num":an2,"table_number":tn,
-            "profile_template":pt,"prelog_id":pl,"kelp_ordering_id":koid,
-            "samples":sample_list,"analysis_columns":ac,
-        }
-        lp=LOGO_PATH if os.path.exists(LOGO_PATH) else None
-        pdf=generate_coc_pdf(d,logo_path=lp)
-        st.download_button("Download CoC PDF",pdf.read(),"KELP_CoC.pdf","application/pdf")
-        st.success("CoC generated!")
-
-if __name__=="__main__":
-    main()
+    pdf = generate_coc_pdf(d)
+    with open("/home/claude/test_v14.pdf", "wb") as f:
+        f.write(pdf.read())
+    print(f"v14 PDF: {os.path.getsize('/home/claude/test_v14.pdf')} bytes")
