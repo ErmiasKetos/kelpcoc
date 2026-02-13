@@ -780,8 +780,3 @@ def generate_coc_pdf(data, logo_path=None):
     c.drawRightString(RM, 6,
                       "CONTROLLED DOCUMENT - Do not copy without authorization  |  Page 2 of 2")
 
-    c.showPage()
-    c.save()
-    buf.seek(0)
-    return buf
-
