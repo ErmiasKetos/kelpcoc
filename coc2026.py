@@ -780,3 +780,78 @@ def generate_coc_pdf(data, logo_path=None):
     c.drawRightString(RM, 6,
                       "CONTROLLED DOCUMENT - Do not copy without authorization  |  Page 2 of 2")
 
+    c.showPage()
+    c.save()
+    buf.seek(0)
+    return buf
+
+
+# ═══ Quick Test ═══
+if __name__ == "__main__":
+    d = {
+        "company_name": "Luna Owners Association",
+        "street_address": "123 Main St, Sunnyvale CA 94086",
+        "phone": "408-555-1234",
+        "email": "test@example.com",
+        "cc_email": "cc@example.com",
+        "contact_name": "ermias@ketos.co",
+        "project_number": "12345",
+        "project_name": "03-05-2025",
+        "invoice_to": "Same",
+        "invoice_email": "billing@luna.com",
+        "site_info": "Bldg A",
+        "purchase_order": "PO-9876",
+        "quote_number": "Q-555",
+        "county_state": "Santa Clara, CA",
+        "time_zone": "PT",
+        "data_deliverable": "Level I (Std)",
+        "regulatory_program": "DW",
+        "reportable": "No",
+        "rush": "Standard (5-10 Day)",
+        "pwsid": "CA0110005",
+        "field_filtered": "No",
+        "analysis_profile_template": "Homeowner",
+        "preservative_type": "(1) None, (2) HNO3",
+        "container_size": "(1) 1L, (2) 500mL",
+        "additional_instructions": "Rush if possible",
+        "customer_remarks": "Samples from bldg A lobby fountain",
+        "num_coolers": "1",
+        "thermometer_id": "T-001",
+        "temperature": "4.2",
+        "received_on_ice": "Yes",
+        "tracking_number": "FX-12345",
+        "delivery_method": "FedEx",
+        "project_manager": "J. Smith",
+        "acct_num": "ACCT-001",
+        "table_number": "T1",
+        "profile_template": "Homeowner",
+        "prelog_id": "PRE-001",
+        "kelp_ordering_id": "KELP-021226-0001",
+        "samples": [
+            {"sample_id": "Tap-A-001", "matrix": "DW", "comp_grab": "GRAB",
+             "start_date": "02/12/26", "start_time": "07:56",
+             "end_date": "02/12/26", "end_time": "07:56",
+             "num_containers": "2", "res_cl_result": "0.5", "res_cl_units": "mg/L",
+             "analyses": ["General Chem", "Metals", "PFAS"],
+             "comment": "Kitchen tap"},
+            {"sample_id": "Tap-B-002", "matrix": "DW", "comp_grab": "GRAB",
+             "start_date": "02/12/26", "start_time": "08:15",
+             "end_date": "02/12/26", "end_time": "08:15",
+             "num_containers": "2", "res_cl_result": "0.3", "res_cl_units": "mg/L",
+             "analyses": ["General Chem", "Metals", "PFAS"],
+             "comment": "Bathroom"},
+            {"sample_id": "Well-003", "matrix": "GW", "comp_grab": "GRAB",
+             "start_date": "02/12/26", "start_time": "09:00",
+             "end_date": "02/12/26", "end_time": "09:00",
+             "num_containers": "3",
+             "analyses": ["General Chem", "Inorganics/Anions", "Hardness"],
+             "comment": ""},
+        ],
+        # Use defaults — method references will be auto-populated
+        # "analysis_columns" omitted to use DEFAULT_ANALYSIS_COLUMNS
+    }
+
+    pdf = generate_coc_pdf(d)
+    with open("/home/claude/test_v14.pdf", "wb") as f:
+        f.write(pdf.read())
+    print(f"v14 PDF: {os.path.getsize('/home/claude/test_v14.pdf')} bytes")
