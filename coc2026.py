@@ -784,5 +784,10 @@ def generate_coc_pdf(data, logo_path=None):
     c.save()
     buf.seek(0)
     return buf
+  # In your Streamlit app:
+from coc_v14 import generate_coc_pdf
+
+pdf_buf = generate_coc_pdf(data, logo_path="kelp_logo.png")
+st.download_button("Download CoC", pdf_buf, file_name="KELP_CoC.pdf", mime="application/pdf")
 
 
