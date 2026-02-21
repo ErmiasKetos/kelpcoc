@@ -25,7 +25,8 @@ st.header("1\ufe0f\u20e3 Client Information")
 c1, c2 = st.columns(2)
 with c1:
     company_name = st.text_input("Company Name")
-    street_address = st.text_input("Street Address")
+    client_street = st.text_input("Street Address")
+    client_city_state_zip = st.text_input("City, State, ZIP")
     customer_project = st.text_input("Customer Project #")
     project_name = st.text_input("Project Name")
 with c2:
@@ -33,6 +34,7 @@ with c2:
     phone = st.text_input("Phone #")
     email = st.text_input("E-Mail")
     cc_email = st.text_input("Cc E-Mail")
+    invoice_to = st.text_input("Invoice To")
 
 st.header("2\ufe0f\u20e3 Project Details")
 c3, c4 = st.columns(2)
@@ -42,7 +44,6 @@ with c3:
     purchase_order = st.text_input("Purchase Order #")
     quote_number = st.text_input("Quote #")
 with c4:
-    invoice_to = st.text_input("Invoice To")
     invoice_email = st.text_input("Invoice E-mail")
     container_size = st.selectbox("Container Size", ["500mL", "1L", "250mL", "125mL", "100mL", "Other"])
     preservative = st.selectbox("Preservative Type", [
@@ -170,7 +171,8 @@ with ac2:
 st.divider()
 if st.button("\U0001f4e4 Generate COC PDF", type="primary", use_container_width=True):
     coc_data = {
-        "company_name": company_name, "street_address": street_address,
+        "company_name": company_name, "client_address": client_street,
+        "client_address_2": client_city_state_zip,
         "contact_name": contact_name, "phone": phone, "email": email, "cc_email": cc_email,
         "project_number": customer_project, "project_name": project_name,
         "invoice_to": invoice_to, "invoice_email": invoice_email,
