@@ -3,7 +3,7 @@ coc2026.py — KELP Chain-of-Custody Streamlit App v17
 """
 import streamlit as st
 from datetime import datetime
-from coc_catalog import KELP_ANALYTE_CATALOG
+from coc_catalog import KELP_ANALYTE_CATALOG, generate_coc_id
 
 DOC_ID = "KELP-QMS-FORM-001"
 DOC_VERSION = "1.1"
