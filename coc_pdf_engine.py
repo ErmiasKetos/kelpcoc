@@ -61,12 +61,12 @@ def SECTION_LABEL(c,x,y,w,h,text):
     c.drawCentredString(x+w/2,y+h/2-2.5,text)
 
 def _footer(c,pn,tp,coc_id=""):
-    y=18
+    y=14
     c.setStrokeColor(black); c.setLineWidth(0.3); c.line(LM,y,RM,y)
-    c.setFont("Helvetica",FS_FOOTER); c.setFillColor(black)
+    c.setFont("Helvetica",4.5); c.setFillColor(black)
     lt=DOC_ID+"  |  Version "+DOC_VERSION+"  |  Effective: "+DOC_EFF_DATE
     if coc_id: lt+="  |  COC ID: "+coc_id
-    c.drawString(LM,y-9,lt); c.drawRightString(RM,y-9,"CONTROLLED DOCUMENT  |  Page "+str(pn)+" of "+str(tp))
+    c.drawString(LM,y-8,lt); c.drawRightString(RM,y-8,"CONTROLLED DOCUMENT  |  Page "+str(pn)+" of "+str(tp))
 
 def _wrap_vtext(label, max_h, fs, bold):
     fn="Helvetica-Bold" if bold else "Helvetica"
@@ -339,10 +339,10 @@ def generate_coc_pdf(data, logo_path=None):
     # BOTTOM ZONE
     bot_top=data_top-max_rows*data_rh
     SECTION_LABEL(c,LM,bot_top-sec_h,RM-LM,sec_h,"CHAIN OF CUSTODY RECORD / LABORATORY RECEIVING"); bot_top-=sec_h
-    inst_h=20; half_w=(RM-LM)/2
+    inst_h=16; half_w=(RM-LM)/2
     R(c,LM,bot_top-inst_h,half_w,inst_h)
-    T(c,LM+2,bot_top-7,"Additional Instructions from KELP:",bold=True)
-    TV(c,LM+4,bot_top-16,g("additional_instructions"),fs=6,maxw=half_w-8)
+    T(c,LM+2,bot_top-7,"Additional Instructions for KELP:",bold=True)
+    TV(c,LM+4,bot_top-14,g("additional_instructions"),fs=6,maxw=half_w-8)
     R(c,LM+half_w,bot_top-inst_h,half_w,inst_h)
     T(c,LM+half_w+2,bot_top-7,"Customer Remarks / Special Conditions / Possible Hazards:",bold=True)
     TV(c,LM+half_w+4,bot_top-16,g("customer_remarks"),fs=6,maxw=half_w-8)
