@@ -1,9 +1,11 @@
 """
-coc_pdf_engine.py - KELP COC PDF Generator v18
+coc_pdf_engine.py - KELP COC PDF Generator v19
 
-Fixes: vertical text spacing, footer overlap, print-friendly font sizes
+Key fix: Vertical text uses exactly 2 lines per column (method + label).
+If label is too long for available height, splits into more columns.
+Matches reference screenshot layout exactly.
 """
-import io, os, textwrap
+import io, os
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter, landscape
 from reportlab.lib.colors import black, white, HexColor
@@ -68,71 +70,105 @@ def _footer(c,pn,tp,coc_id=""):
     if coc_id: lt+="  |  COC ID: "+coc_id
     c.drawString(LM,y-8,lt); c.drawRightString(RM,y-8,"CONTROLLED DOCUMENT  |  Page "+str(pn)+" of "+str(tp))
 
-def _wrap_vtext(label, max_h, fs, bold):
-    fn="Helvetica-Bold" if bold else "Helvetica"
-    if stringWidth(label,fn,fs)<=max_h-6: return [label]
-    words=label.split(); lines=[]; cur=""
-    for word in words:
-        test=cur+(" " if cur else "")+word
-        if stringWidth(test,fn,fs)<=max_h-8: cur=test
-        else:
-            if cur: lines.append(cur)
-            cur=word
-    if cur: lines.append(cur)
-    return lines
 
-def _build_analysis_columns(samples):
-    cat_analytes={}; cat_order=list(KELP_ANALYTE_CATALOG.keys())
+def _build_analysis_columns(samples, avail_h):
+    """Build columns where each label fits as single vertical line within avail_h.
+    If too long, split analytes across multiple columns for the same category."""
+    # Build reverse lookup: short_name -> full_name
+    short_to_full = {v: k for k, v in CAT_SHORT_MAP.items()}
+
+    cat_analytes = {}
+    cat_order = list(KELP_ANALYTE_CATALOG.keys())
     for s in samples:
-        analyses=s.get("analyses",{})
-        if isinstance(analyses,list): analyses={cat:[] for cat in analyses}
-        for cn,al in analyses.items():
+        analyses = s.get("analyses", {})
+        if isinstance(analyses, list): analyses = {cat: [] for cat in analyses}
+        for cn, al in analyses.items():
             if not al: continue
-            if cn not in cat_analytes: cat_analytes[cn]=[]
+            # Resolve short names to full catalog names
+            resolved = cn
+            if cn not in KELP_ANALYTE_CATALOG and cn in short_to_full:
+                resolved = short_to_full[cn]
+            if resolved not in cat_analytes: cat_analytes[resolved] = []
             for a in al:
-                if a not in cat_analytes[cn]: cat_analytes[cn].append(a)
-    columns=[]
-    MAX_CHARS=100
+                if a not in cat_analytes[resolved]: cat_analytes[resolved].append(a)
+
+    columns = []
+    fn_bold = "Helvetica-Bold"
+    max_text_w = avail_h - 8  # padding
+
     for cn in cat_order:
         if cn not in cat_analytes: continue
-        analytes=cat_analytes[cn]
-        method=", ".join(KELP_ANALYTE_CATALOG[cn]["methods"])
-        short=CAT_SHORT_MAP.get(cn,cn)
-        a_str=", ".join(analytes)
-        full=short+" ("+a_str+")"
-        msub="("+method+")"
-        if len(full)<=MAX_CHARS:
-            columns.append({"label":full,"method":msub,"cat_name":cn})
-        else:
-            chunks=[]; cur=[]; cur_len=len(short)+3
-            for a in analytes:
-                add=len(a)+(2 if cur else 0)
-                if cur_len+add>MAX_CHARS and cur:
-                    chunks.append(cur); cur=[a]; cur_len=len(short)+10+len(a)
-                else: cur.append(a); cur_len+=add
-            if cur: chunks.append(cur)
-            for ci,chunk in enumerate(chunks):
-                lbl=short+" ("+", ".join(chunk)+")" if ci==0 else short+" cont'd ("+", ".join(chunk)+")"
-                columns.append({"label":lbl,"method":msub,"cat_name":cn})
+        analytes = cat_analytes[cn]
+        method = ", ".join(KELP_ANALYTE_CATALOG[cn]["methods"])
+        short = CAT_SHORT_MAP.get(cn, cn)
+        msub = "(" + method + ")"
+
+        # Try all analytes in one label
+        full = short + " (" + ", ".join(analytes) + ")"
+        if stringWidth(full, fn_bold, FS_VERT) <= max_text_w:
+            columns.append({"label": full, "method": msub, "cat_name": cn})
+            continue
+
+        # Split analytes into chunks that each fit
+        chunks = []
+        cur_analytes = []
+        for a in analytes:
+            test_label = short + " (" + ", ".join(cur_analytes + [a]) + ")"
+            if cur_analytes and stringWidth(test_label, fn_bold, FS_VERT) > max_text_w:
+                chunks.append(cur_analytes)
+                cur_analytes = [a]
+            else:
+                cur_analytes.append(a)
+        if cur_analytes:
+            chunks.append(cur_analytes)
+
+        for ci, chunk in enumerate(chunks):
+            if ci == 0:
+                lbl = short + " (" + ", ".join(chunk) + ")"
+            else:
+                lbl = short + " cont'd (" + ", ".join(chunk) + ")"
+            # Safety: if single analyte still too long, it will be auto-shrunk during render
+            columns.append({"label": lbl, "method": msub, "cat_name": cn})
+
     return columns
 
+
 def generate_coc_pdf(data, logo_path=None):
-    buf=io.BytesIO(); c=canvas.Canvas(buf,pagesize=(PW,PH))
+    buf = io.BytesIO(); c = canvas.Canvas(buf, pagesize=(PW, PH))
     c.setTitle("KELP Chain-of-Custody")
-    d=data; g=lambda k,dflt="": d.get(k,dflt) or dflt
-    coc_id=d.get("coc_id") or generate_coc_id()
-    dyn_cols=_build_analysis_columns(d.get("samples",[])); num_acols=max(len(dyn_cols),1)
-    total_pages=2
+    d = data; g = lambda k, dflt="": d.get(k, dflt) or dflt
+    coc_id = d.get("coc_id") or generate_coc_id()
+    total_pages = 2
+
+    # Pre-calculate geometry to know tall_h before building columns
+    hdr_top=588; hdr_bot=556; hdr_h=hdr_top-hdr_bot
+    rh=10; sec_h=8; z3_rh=19; lrh=14.5
+    ci_top = hdr_bot - sec_h
+    z3_top = ci_top - 5*rh - sec_h
+    z4_top = z3_top - sec_h - 4*z3_rh
+    ya_b = z4_top - lrh
+    dd_top = ya_b; dd_h = lrh*4
+    ml_top = dd_top - dd_h; ml_h = 10
+    th_top = ml_top - ml_h; th_h = 32
+    tall_bot = th_top - th_h
+    tall_h = z4_top - tall_bot
+
+    # Build columns with known height
+    dyn_cols = _build_analysis_columns(d.get("samples", []), tall_h)
+    num_acols = max(len(dyn_cols), 1)
 
     KELP_STRIP_W=10; COMMENT_W=84; PNC_W=20
-    right_fixed=KELP_STRIP_W+COMMENT_W+PNC_W
-    atotal_w=RM-ACOL-right_fixed; col_w=max(18,atotal_w/num_acols)
-    if col_w*num_acols>atotal_w: col_w=atotal_w/num_acols
-    AX=[ACOL+i*col_w for i in range(num_acols+1)]
-    KSX=AX[-1]; SBX=KSX+KELP_STRIP_W; PNCX=SBX+COMMENT_W
+    right_fixed = KELP_STRIP_W + COMMENT_W + PNC_W
+    atotal_w = RM - ACOL - right_fixed
+    col_w = max(18, atotal_w / num_acols)
+    if col_w * num_acols > atotal_w: col_w = atotal_w / num_acols
+    AX = [ACOL + i * col_w for i in range(num_acols + 1)]
+    KSX = AX[-1]; SBX = KSX + KELP_STRIP_W; PNCX = SBX + COMMENT_W
+
+    lw_ = COL2 - LM; cw_ = ACOL - COL2
 
     # === PAGE 1 ===
-    hdr_top=588; hdr_bot=556; hdr_h=hdr_top-hdr_bot
+    # Header
     c.setStrokeColor(KELP_BLUE); c.setLineWidth(1.5)
     c.line(LM,hdr_top,RM,hdr_top); c.line(LM,hdr_bot,RM,hdr_bot)
     c.setStrokeColor(black); c.setLineWidth(LW_OUTER); c.rect(LM,hdr_bot,RM-LM,hdr_h,fill=0,stroke=1)
@@ -150,15 +186,15 @@ def generate_coc_pdf(data, logo_path=None):
     T(c,kx+3,hdr_top-10,"KELP USE ONLY",fs=7,bold=True,color=HDR_BLUE)
     T(c,kx+3,hdr_top-20,"KELP Ordering ID:",fs=FS_LABEL)
     HLINE(c,kx+72,RM-6,hdr_top-22,lw=0.3)
-    kid=g("kelp_ordering_id");
+    kid=g("kelp_ordering_id")
     if kid: TV(c,kx+74,hdr_top-20,kid)
     T(c,kx+3,hdr_top-29,"COC ID: "+coc_id,fs=6,bold=True,color=HDR_BLUE)
 
-    ci_top=hdr_bot; rh=10; lw_=COL2-LM; cw_=ACOL-COL2; sec_h=8
-    SECTION_LABEL(c,LM,ci_top-sec_h,ACOL-LM,sec_h,"CLIENT INFORMATION"); ci_top-=sec_h
-
+    # CLIENT INFO
+    SECTION_LABEL(c,LM,ci_top-sec_h,ACOL-LM,sec_h,"CLIENT INFORMATION")
+    ci_y = ci_top - sec_h
     def ci_row(ri,ll,lv,cl,cv):
-        yt=ci_top-ri*rh; yb=yt-rh; R(c,LM,yb,lw_,rh); R(c,COL2,yb,cw_,rh)
+        yt=ci_y-ri*rh; yb=yt-rh; R(c,LM,yb,lw_,rh); R(c,COL2,yb,cw_,rh)
         if ll: T(c,LM+2,yb+2,ll); tw=stringWidth(ll,"Helvetica",FS_LABEL)+3; TV(c,LM+tw,yb+1,lv,maxw=lw_-tw-2)
         if cl: T(c,COL2+2,yb+2,cl); tw=stringWidth(cl,"Helvetica",FS_LABEL)+3; TV(c,COL2+tw,yb+1,cv,maxw=cw_-tw-2)
 
@@ -167,11 +203,10 @@ def generate_coc_pdf(data, logo_path=None):
     ci_row(2,"","","E-Mail:",g("email"))
     ci_row(3,"","","Cc E-Mail:",g("cc_email"))
     ci_row(4,"Customer Project #:",g("project_number"),"Invoice to:",g("invoice_to"))
-    R(c,ACOL,ci_top-5*rh,RM-ACOL,5*rh)
+    R(c,ACOL,ci_y-5*rh,RM-ACOL,5*rh)
 
-    z3_top=ci_top-5*rh; z3_rh=19
-    SECTION_LABEL(c,LM,z3_top-sec_h,ACOL-LM,sec_h,"PROJECT DETAILS"); z3_top-=sec_h
-
+    # PROJECT DETAILS
+    SECTION_LABEL(c,LM,z3_top,ACOL-LM,sec_h,"PROJECT DETAILS")
     y6b=z3_top-z3_rh
     R(c,LM,y6b,lw_,z3_rh); T(c,LM+2,y6b+10,"Project Name:"); TV(c,LM+55,y6b+10,g("project_name"),maxw=lw_-59)
     R(c,COL2,y6b,cw_,z3_rh); T(c,COL2+2,y6b+10,"Invoice E-mail:"); TV(c,COL2+60,y6b+10,g("invoice_email"),maxw=cw_-64)
@@ -187,6 +222,7 @@ def generate_coc_pdf(data, logo_path=None):
     R(c,LM,y9b,lw_,z3_rh); T(c,LM+2,y9b+10,"County / State origin of sample(s):"); TV(c,LM+2,y9b+1,g("county_state"),maxw=lw_-6)
     R(c,COL2,y9b,cw_,z3_rh)
 
+    # Right legend
     acol_w=AX[-1]-AX[0]; lr_x=SBX; lr_w=RM-SBX
     R(c,ACOL,y6b,acol_w+KELP_STRIP_W,z3_rh); R(c,lr_x,y6b,lr_w,z3_rh)
     R(c,ACOL,y7b,acol_w+KELP_STRIP_W,z3_rh)
@@ -211,13 +247,13 @@ def generate_coc_pdf(data, logo_path=None):
     R(c,ACOL,y9b,acol_w+KELP_STRIP_W,z3_rh)
     TC(c,ACOL,y9b+6,acol_w,"Analysis Requested",fs=FS_HEADER,bold=True)
 
-    z4_top=z3_top-sec_h-4*z3_rh; lrh=14.5
-    ya_b=z4_top-lrh; R(c,LM,ya_b,ACOL-LM,lrh); T(c,LM+2,ya_b+3,"Sample Collection Time Zone:")
+    # ZONE 4: Timezone + Deliverables
+    R(c,LM,ya_b,ACOL-LM,lrh); T(c,LM+2,ya_b+3,"Sample Collection Time Zone:")
     tz=g("time_zone","PT")
     for tn,tx in [("AK",130),("PT",160),("MT",186),("CT",210),("ET",236)]:
         CB(c,tx,ya_b+2,checked=(tn==tz)); T(c,tx+9,ya_b+3,tn)
 
-    dd_top=ya_b; dd_h=lrh*4; dd_w=130; reg_w=ACOL-LM-dd_w; rx=LM+dd_w
+    dd_w=130; reg_w=ACOL-LM-dd_w; rx=LM+dd_w
     R(c,LM,dd_top-dd_h,dd_w,dd_h); T(c,LM+2,dd_top-10,"Data Deliverables:")
     sd=g("data_deliverable","Level I (Std)")
     for lbl,bx,by in [("Level I (Std)",LM+6,dd_top-24),("Level II",LM+68,dd_top-24),("Level III",LM+6,dd_top-38),("Other",LM+6,dd_top-52)]:
@@ -242,13 +278,14 @@ def generate_coc_pdf(data, logo_path=None):
     CB(c,rx+125,dd_top-lrh*4+2,checked=(ff=="Yes")); T(c,rx+134,dd_top-lrh*4+3,"Yes")
     CB(c,rx+158,dd_top-lrh*4+2,checked=(ff=="No")); T(c,rx+167,dd_top-lrh*4+3,"No")
 
-    ml_top=dd_top-dd_h; ml_h=10; R(c,LM,ml_top-ml_h,ACOL-LM,ml_h)
+    R(c,LM,ml_top-ml_h,ACOL-LM,ml_h)
     T(c,LM+2,ml_top-ml_h+2,"* Matrix: Drinking Water(DW), Ground Water(GW), Wastewater(WW), Product(P), Surface Water(SW), Other(OT)",fs=FS_LEGEND)
 
-    th_top=ml_top-ml_h; th_h=32; grp_h=12; sub_h=th_h-grp_h
+    # TABLE HEADERS
     R(c,LM,th_top-th_h,160.8,th_h); TC(c,LM,th_top-th_h/2-3,160.8,"Customer Sample ID",fs=FS_HEADER,bold=True)
     R(c,178.1,th_top-th_h,31.5,th_h); TC(c,178.1,th_top-th_h/2+3,31.5,"Matrix",fs=FS_HEADER,bold=True); TC(c,178.1,th_top-th_h/2-7,31.5,"*",fs=FS_HEADER,bold=True)
     R(c,209.6,th_top-th_h,27.8,th_h); TC(c,209.6,th_top-th_h/2+3,27.8,"Comp /",fs=FS_HEADER,bold=True); TC(c,209.6,th_top-th_h/2-7,27.8,"Grab",fs=FS_HEADER,bold=True)
+    grp_h=12; sub_h=th_h-grp_h
     R(c,237.4,th_top-grp_h,89.6,grp_h); TC(c,237.4,th_top-grp_h+2,89.6,"Composite Start",fs=FS_LABEL,bold=True)
     R(c,237.4,th_top-th_h,54.3,sub_h); TC(c,237.4,th_top-th_h+sub_h/2-3,54.3,"Date",fs=FS_LABEL,bold=True)
     R(c,291.7,th_top-th_h,35.3,sub_h); TC(c,291.7,th_top-th_h+sub_h/2-3,35.3,"Time",fs=FS_LABEL,bold=True)
@@ -260,42 +297,38 @@ def generate_coc_pdf(data, logo_path=None):
     R(c,432.1,th_top-th_h,23.1,sub_h); TC(c,432.1,th_top-th_h+sub_h/2-3,23.1,"Result",fs=FS_LEGEND,bold=True)
     R(c,455.2,th_top-th_h,21.6,sub_h); TC(c,455.2,th_top-th_h+sub_h/2-3,21.6,"Units",fs=FS_LEGEND,bold=True)
 
-    # TALL VERTICAL ANALYSIS COLUMNS
-    tall_bot=th_top-th_h; tall_h=z4_top-tall_bot
-    cat_col_indices={}
-    for ci,col_info in enumerate(dyn_cols):
-        cat=col_info["cat_name"]
-        if cat not in cat_col_indices: cat_col_indices[cat]=[]
+    # VERTICAL ANALYSIS COLUMNS — exactly 2 lines each: method (left) + label (right)
+    cat_col_indices = {}
+    for ci, col_info in enumerate(dyn_cols):
+        cat = col_info["cat_name"]
+        if cat not in cat_col_indices: cat_col_indices[cat] = []
         cat_col_indices[cat].append(ci)
 
-    vert_line_gap=FS_VERT+3  # spacing between wrapped vertical lines
-
     for ci in range(num_acols):
-        ax0=AX[ci]; ax1=AX[ci+1] if ci+1<len(AX) else KSX; aw=ax1-ax0
-        R(c,ax0,tall_bot,aw,tall_h)
-        if ci<len(dyn_cols):
-            col_info=dyn_cols[ci]; label=col_info["label"]; method=col_info["method"]
-            avail_h=tall_h-8
-            label_lines=_wrap_vtext(label,avail_h,FS_VERT,bold=True)
-            nl=len(label_lines)
-            # Total width = label lines + gap + method line
-            total_needed=(nl+1.5)*vert_line_gap
-            vlg=vert_line_gap
-            if total_needed>aw-4: vlg=max(FS_VERT+1,(aw-4)/(nl+1.5))
-            # Label occupies right portion, method on left
-            block_w=nl*vlg
-            label_right=ax0+aw/2+block_w/2
-            if label_right>ax1-2: label_right=ax1-2
-            for li,line in enumerate(label_lines):
-                lx=label_right-li*vlg
-                VTEXT(c,lx,tall_bot+4,line,fs=FS_VERT,bold=True)
-            method_x=label_right-nl*vlg-vlg*0.8
-            if method_x<ax0+1: method_x=ax0+1
-            VTEXT(c,method_x,tall_bot+4,method,fs=FS_VERT-0.5,bold=False)
+        ax0 = AX[ci]; ax1 = AX[ci+1] if ci+1 < len(AX) else KSX; aw = ax1 - ax0
+        R(c, ax0, tall_bot, aw, tall_h)
+        if ci < len(dyn_cols):
+            col_info = dyn_cols[ci]
+            label = col_info["label"]
+            method = col_info["method"]
+            # Two lines: method on left side, label on right side of column
+            # Auto-shrink if label still too wide for available height
+            avail = tall_h - 8
+            lfs = FS_VERT
+            while lfs > 4.0 and stringWidth(label, "Helvetica-Bold", lfs) > avail:
+                lfs -= 0.3
+            mfs = min(lfs, FS_VERT - 0.5)
+            # Position: label at right side of column, method at left
+            label_x = ax0 + aw * 0.65  # right portion
+            method_x = ax0 + aw * 0.25  # left portion
+            VTEXT(c, label_x, tall_bot + 4, label, fs=lfs, bold=True)
+            VTEXT(c, method_x, tall_bot + 4, method, fs=mfs, bold=False)
 
-    R(c,KSX,tall_bot,KELP_STRIP_W,tall_h)
-    VTEXT(c,KSX+KELP_STRIP_W/2+2,tall_bot+tall_h/2-20,"KELP Use Only",fs=FS_LEGEND,bold=True)
+    # KELP strip
+    R(c, KSX, tall_bot, KELP_STRIP_W, tall_h)
+    VTEXT(c, KSX + KELP_STRIP_W/2 + 2, tall_bot + tall_h/2 - 20, "KELP Use Only", fs=FS_LEGEND, bold=True)
 
+    # Right side fields
     sbf_h=18; fy=z4_top
     for lbl,val in [("Project Mgr.:",g("project_manager")),("AcctNum / Client ID:",g("acct_num")),("Table #:",g("table_number")),("Profile / Template:",g("profile_template")),("Prelog / Bottle Ord. ID:",g("prelog_id"))]:
         R(c,SBX,fy-sbf_h,COMMENT_W,sbf_h)
@@ -304,6 +337,7 @@ def generate_coc_pdf(data, logo_path=None):
     sc_h=fy-tall_bot; R(c,SBX,tall_bot,COMMENT_W,sc_h)
     TC(c,SBX,tall_bot+sc_h/2-3,COMMENT_W,"Sample Comment",fs=FS_HEADER,bold=True)
 
+    # PNC column
     R(c,PNCX,tall_bot,PNC_W,z4_top-tall_bot)
     VTEXT(c,PNCX+PNC_W/2+4,tall_bot+6,"Preservation non-conformance",fs=5,bold=False)
     VTEXT(c,PNCX+PNC_W/2-4,tall_bot+6,"identified for sample.",fs=5,bold=False)
@@ -326,11 +360,20 @@ def generate_coc_pdf(data, logo_path=None):
         for ci2 in range(num_acols):
             ax0=AX[ci2]; ax1=AX[ci2+1] if ci2+1<len(AX) else KSX; R(c,ax0,ryb,ax1-ax0,data_rh)
         for cat_name,al in sa.items():
-            if not al or cat_name not in cat_col_indices: continue
-            ci_idx=cat_col_indices[cat_name][0]
-            if ci_idx<num_acols:
-                ax0=AX[ci_idx]; ax1=AX[ci_idx+1] if ci_idx+1<len(AX) else KSX
-                TC(c,ax0,ryb+5,ax1-ax0,"X",fs=FS_VALUE,bold=True)
+            if not al: continue
+            # Resolve short name
+            resolved = cat_name
+            if cat_name not in cat_col_indices:
+                from coc_catalog import CAT_SHORT_MAP as _csm
+                _s2f = {v: k for k, v in _csm.items()}
+                if cat_name in _s2f:
+                    resolved = _s2f[cat_name]
+            if resolved not in cat_col_indices: continue
+            # Mark X in ALL columns for this category (including cont'd columns)
+            for ci_idx in cat_col_indices[resolved]:
+                if ci_idx < num_acols:
+                    ax0=AX[ci_idx]; ax1=AX[ci_idx+1] if ci_idx+1<len(AX) else KSX
+                    TC(c,ax0,ryb+5,ax1-ax0,"X",fs=FS_VALUE,bold=True)
         R(c,KSX,ryb,KELP_STRIP_W,data_rh); R(c,SBX,ryb,COMMENT_W,data_rh)
         cmt=s.get("comment","")
         if cmt: TV(c,SBX+2,ryb+5,cmt,fs=FS_LEGEND,maxw=COMMENT_W-4)
@@ -345,7 +388,7 @@ def generate_coc_pdf(data, logo_path=None):
     TV(c,LM+4,bot_top-14,g("additional_instructions"),fs=6,maxw=half_w-8)
     R(c,LM+half_w,bot_top-inst_h,half_w,inst_h)
     T(c,LM+half_w+2,bot_top-7,"Customer Remarks / Special Conditions / Possible Hazards:",bold=True)
-    TV(c,LM+half_w+4,bot_top-16,g("customer_remarks"),fs=6,maxw=half_w-8)
+    TV(c,LM+half_w+4,bot_top-14,g("customer_remarks"),fs=6,maxw=half_w-8)
 
     lr_top=bot_top-inst_h; lr_h=11
     R(c,LM,lr_top-lr_h,RM-LM,lr_h)
@@ -371,15 +414,11 @@ def generate_coc_pdf(data, logo_path=None):
             for dn,dx in [("In-Person",rsx+52),("FedEx",rsx+52+avail*0.30),("UPS",rsx+52+avail*0.55),("Other",rsx+52+avail*0.75)]:
                 CB(c,dx,ryb+1,checked=(dn==dm),sz=6); T(c,dx+8,ryb+3,dn,fs=FS_LEGEND)
 
-    # Outer border closes at bottom of last relinquished row
     form_bot=rel_top-3*rel_h
-    if form_bot<22: form_bot=22
+    if form_bot<26: form_bot=26
     c.setStrokeColor(black); c.setLineWidth(LW_OUTER); c.rect(LM,form_bot,RM-LM,hdr_top-form_bot,fill=0,stroke=1)
-
-    # Disclaimer BELOW outer border, above footer
-    disc_y=form_bot-2
-    T(c,LM+5,disc_y,"Submitting a sample via this chain of custody constitutes acknowledgment and acceptance of the KELP\u2019s Terms and Conditions",fs=5)
-    c.setStrokeColor(black); c.setLineWidth(LW_OUTER); c.rect(LM,form_bot,RM-LM,hdr_top-form_bot,fill=0,stroke=1)
+    disc_y=form_bot-5
+    T(c,LM+5,disc_y,"Submitting a sample via this chain of custody constitutes acknowledgment and acceptance of the KELP\u2019s Terms and Conditions",fs=4.5)
     _footer(c,1,total_pages,coc_id)
 
     # === PAGE 2: INSTRUCTIONS ===
@@ -388,12 +427,9 @@ def generate_coc_pdf(data, logo_path=None):
     c.drawCentredString(PW/2,PH-40,"Chain of Custody (COC) Instructions")
     c.setFont("Helvetica",10); c.setFillColor(black)
     c.drawCentredString(PW/2,PH-56,"Complete all relevant fields on the COC form. Incomplete information may cause delays.")
-
     col1_x=30; col2_x=420; cw=370; bfs=9.5; hfs=10; bul_=9
-
     def sec_heading(yp,text,cx=col1_x):
         c.setFont("Helvetica-Bold",hfs); c.setFillColor(HDR_BLUE); c.drawString(cx,yp,text); return yp-14
-
     def bullet_item(yp,label,desc,cx=col1_x,w=cw):
         c.setFont("Helvetica-Bold",bfs); c.setFillColor(black); c.drawString(cx+bul_,yp,"\u2022")
         lw2=stringWidth(label,"Helvetica-Bold",bfs); c.drawString(cx+bul_+8,yp,label)
@@ -408,14 +444,12 @@ def generate_coc_pdf(data, logo_path=None):
             c.drawString(xs,yp,line); remaining=" ".join(rw)
             if remaining: yp-=12; xs=cx+bul_+8; aw=w-bul_-8
         return yp-14
-
     y=PH-85; y=sec_heading(y,"1. Client & Project Information:")
     for l,d2 in [("Company Name:","Your company\u2019s name."),("Street Address:","Your mailing address."),("Contact/Report To:","Person designated to receive results."),("Customer Project # and Project Name:","Your project reference number and name."),("Site Collection Info/Facility ID:","Project location or facility ID."),("Time Zone:","Sample collection time zone (e.g., AK, PT, MT, CT, ET)."),("Purchase Order #:","Your PO number for invoicing."),("Invoice To:","Contact person for the invoice."),("Invoice Email:","Email address for the invoice."),("Phone #:","Your contact phone number."),("E-mail:","Your email for correspondence and the final report."),("Data Deliverable:","Required data deliverable level."),("Field Filtered:","Indicate if samples were filtered in the field (Yes/No)."),("Quote #:","Quote number, if applicable."),("DW PWSID # or WW Permit #:","Relevant permit numbers, if applicable.")]:
         y=bullet_item(y,l,d2)
     y-=4; y=sec_heading(y,"2. Sample Information:")
     for l,d2 in [("Customer Sample ID:","Unique sample identifier for the report."),("Collected Date:","Sample collection date."),("Collected Time:","Sample collection time."),("Comp/Grab:","GRAB for single-point; COMP for combined samples."),("Matrix:","Sample type (DW, GW, WW, P, SW, OT)."),("Container Size:","Specify size (e.g., 1L, 500mL).")]:
         y=bullet_item(y,l,d2)
-
     y2=PH-85
     for l,d2 in [("Container Preservative Type:","Specify preservative (None, HNO3, H2SO4, etc.)."),("Analysis Requested:","Mark categories for each sample. Analyte names shown in column headers."),("Sample Comment:","Notes about individual samples; identify MS/MSD samples here."),("Residual Chlorine:","Record results and units if measured.")]:
         y2=bullet_item(y2,l,d2,cx=col2_x,w=cw)
@@ -434,7 +468,6 @@ def generate_coc_pdf(data, logo_path=None):
         if stringWidth(test,"Helvetica",8.5)<=cw: line=test
         else: c.drawString(col2_x,cy,line); cy-=12; line=word
     if line: c.drawString(col2_x,cy,line)
-
     _footer(c,2,total_pages,coc_id)
     c.showPage(); c.save(); buf.seek(0)
     return buf, coc_id
