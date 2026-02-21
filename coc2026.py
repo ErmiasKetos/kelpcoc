@@ -8,7 +8,7 @@ Uses:
 """
 import streamlit as st
 from datetime import datetime
-from coc_catalog import KELP_ANALYTE_CATALOG, DOC_ID, DOC_VERSION
+from coc_catalog import KELP_ANALYTE_CATALOG
 from coc_pdf_engine import generate_coc_pdf
 
 DOC_ID = "KELP-QMS-FORM-001"
