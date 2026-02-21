@@ -199,19 +199,48 @@ def generate_coc_pdf(data, logo_path=None):
     if kid: TV(c, kx+77, hdr_top-21, kid)
     T(c, kx+3, hdr_top-31, "COC ID: "+coc_id, fs=6.5, bold=True, color=HDR_BLUE)
 
-    # CLIENT INFO
+    # CLIENT INFO - 5 rows on right, left side: company (1 row) + address (3 rows) + project (1 row)
     SECTION_LABEL(c, LM, ci_top-sec_h, ACOL-LM, sec_h, "CLIENT INFORMATION")
     ci_y = ci_top - sec_h
-    def ci_row(ri, ll, lv, cl, cv):
-        yt=ci_y-ri*rh; yb=yt-rh; R(c,LM,yb,lw_,rh); R(c,COL2,yb,cw_,rh)
-        if ll: T(c,LM+2,yb+2,ll); tw=stringWidth(ll,"Helvetica",FS_LABEL)+3; TV(c,LM+tw,yb+1,lv,maxw=lw_-tw-2)
-        if cl: T(c,COL2+2,yb+2,cl); tw=stringWidth(cl,"Helvetica",FS_LABEL)+3; TV(c,COL2+tw,yb+1,cv,maxw=cw_-tw-2)
 
-    ci_row(0, "Company Name:", g("company_name"), "Contact/Report To:", g("contact_name"))
-    ci_row(1, "Street Address:", g("street_address"), "Phone #:", g("phone"))
-    ci_row(2, "", "", "E-Mail:", g("email"))
-    ci_row(3, "", "", "Cc E-Mail:", g("cc_email"))
-    ci_row(4, "Customer Project #:", g("project_number"), "Invoice to:", g("invoice_to"))
+    # Row 0: Company Name | Contact/Report To
+    y0b = ci_y - rh
+    R(c, LM, y0b, lw_, rh); R(c, COL2, y0b, cw_, rh)
+    T(c, LM+2, y0b+2, "Company Name:"); TV(c, LM+58, y0b+1, g("company_name"), maxw=lw_-62)
+    T(c, COL2+2, y0b+2, "Contact/Report To:"); TV(c, COL2+72, y0b+1, g("contact_name"), maxw=cw_-76)
+
+    # Row 1: Client Address (spans 3 left rows) | Phone
+    y1b = y0b - rh
+    R(c, LM, y1b, lw_, rh)
+    T(c, LM+2, y1b+2, "Client Address:")
+    addr = g("client_address") or g("street_address")
+    if addr: TV(c, LM+60, y1b+1, addr, maxw=lw_-64)
+    R(c, COL2, y1b, cw_, rh)
+    T(c, COL2+2, y1b+2, "Phone #:"); TV(c, COL2+35, y1b+1, g("phone"), maxw=cw_-39)
+
+    # Row 2: Address line 2 (city, state, zip) | E-Mail
+    y2b = y1b - rh
+    R(c, LM, y2b, lw_, rh)
+    addr2 = g("client_address_2")
+    if addr2: TV(c, LM+60, y2b+1, addr2, maxw=lw_-64)
+    R(c, COL2, y2b, cw_, rh)
+    T(c, COL2+2, y2b+2, "E-Mail:"); TV(c, COL2+32, y2b+1, g("email"), maxw=cw_-36)
+
+    # Row 3: Address line 3 (optional) | Cc E-Mail
+    y3b = y2b - rh
+    R(c, LM, y3b, lw_, rh)
+    addr3 = g("client_address_3")
+    if addr3: TV(c, LM+60, y3b+1, addr3, maxw=lw_-64)
+    R(c, COL2, y3b, cw_, rh)
+    T(c, COL2+2, y3b+2, "Cc E-Mail:"); TV(c, COL2+42, y3b+1, g("cc_email"), maxw=cw_-46)
+
+    # Row 4: Customer Project # | Invoice to
+    y4b = y3b - rh
+    R(c, LM, y4b, lw_, rh)
+    T(c, LM+2, y4b+2, "Customer Project #:"); TV(c, LM+78, y4b+1, g("project_number"), maxw=lw_-82)
+    R(c, COL2, y4b, cw_, rh)
+    T(c, COL2+2, y4b+2, "Invoice to:"); TV(c, COL2+44, y4b+1, g("invoice_to"), maxw=cw_-48)
+
     R(c, ACOL, ci_y-5*rh, RM-ACOL, 5*rh)
 
     # PROJECT DETAILS
